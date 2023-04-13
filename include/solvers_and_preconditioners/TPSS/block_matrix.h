@@ -85,7 +85,7 @@ public:
 
       /// compute elementary tensors representing approximation of -A^{-1}
       std::vector<std::array<Table<2, Number>, order>> eigenvectors;
-      eigenvectors.emplace_back(A_in.get_eigenvectors());
+      eigenvectors.emplace_back(A_in.get_eigenvector_tensor());
       scratch = Tensors::productT<order, Number>(ksvd_eigenvalues, eigenvectors);
       const auto & minus_eigenvectors = Tensors::scale<order, Number>(-1., eigenvectors);
       scratch        = Tensors::product<order, Number>(minus_eigenvectors, scratch);
@@ -142,10 +142,10 @@ public:
 
     /// Kronecker decomposition of generalized eigenvectors(D) and mass(D)
     std::vector<std::array<Table<2, Number>, order>> eigenvectors;
-    eigenvectors.emplace_back(D_in.get_eigenvectors());
+    eigenvectors.emplace_back(D_in.get_eigenvector_tensor());
     Q = std::make_shared<TensorProductMatrix<order, Number, n_rows_1d>>(eigenvectors);
     std::vector<std::array<Table<2, Number>, order>> mass;
-    mass.emplace_back(D_in.get_mass());
+    mass.emplace_back(D_in.get_mass_tensor());
     M = std::make_shared<TensorProductMatrix<order, Number, n_rows_1d>>(mass);
 
     /// Z = (I - L^{-1/2}Q^TCA^{-1}BQL^{-1/2})
@@ -308,7 +308,7 @@ public:
 
       /// compute remainder Z - Ztilde1
       auto tensor_ksvd1    = rank1_ksvd.front();
-      tensor_ksvd1.front() = Tensors::scale(-1., tensor_ksvd1.front());
+      tensor_ksvd1.front() = LinAlg::scaling(-1., tensor_ksvd1.front());
       Z_tensors.emplace_back(tensor_ksvd1);
       // {
       //   print_eigenvalues(Z_tensors, "Z - rank1_ksvd_of_Z");
@@ -337,7 +337,7 @@ public:
         {
           // !!!
           pd_factor += delta;
-          Z_tensors.front().front() = matrix_scaling(get_identity_tensor(D_in).front(), pd_factor);
+          Z_tensors.front().front() = LinAlg::scaling(get_identity_tensor(D_in).front(), pd_factor);
           compute_ksvd<Number>(Z_tensors, rank1_ksvd);
           // {
           //   print_eigenvalues(Z_tensors, "scaled Z - rank1_ksvd_of_Z");
@@ -388,6 +388,13 @@ public:
       matrix_type::vmult(dst_view, src_view);
     else if(mode == Mode::ksvd)
     {
+      Assert(M, ExcMessage("M isn't initialized."));
+      Assert(!(M->empty()), ExcMessage("M is empty"));
+      Assert(Q, ExcMessage("Q isn't initialized."));
+      Assert(!(Q->empty()), ExcMessage("Q is empty"));
+      Assert(sqrt_of_Lambda, ExcMessage("sqrt_of_Lambda isn't initialized."));
+      Assert(!(sqrt_of_Lambda->empty()), ExcMessage("sqrt_of_Lambda is empty"));
+
       AlignedVector<Number> tmp(dst_view.size());
       const auto            tmp_view = make_array_view<Number>(tmp.begin(), tmp.end());
       M->vmult(dst_view, src_view);
@@ -1182,7 +1189,7 @@ public:
      * product A_1 (x) A_0
      */
     std::array<std::pair<unsigned int, unsigned int>, 2> size_of_kronecker_factors;
-    unsigned int lanczos_iterations = numbers::invalid_unsigned_int;
+    std::size_t lanczos_iterations = static_cast<std::size_t>(-1);
   };
 
   using matrix_type = MatrixType;

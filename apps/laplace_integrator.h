@@ -463,9 +463,8 @@ public:
   void
   vmult(const ArrayView<Number> dst_view, const ArrayView<const Number> src_view) const
   {
-    // AssertThrow(false, ExcMessage("Dummy satisfying interface of MGCoarseSolver."));
     AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1,
-                ExcMessage("No MPI possible."));
+                ExcMessage("No MPI support."));
     LinearAlgebra::distributed::Vector<Number> dst;
     initialize_dof_vector(dst);
     LinearAlgebra::distributed::Vector<Number> src;
@@ -473,6 +472,17 @@ public:
     std::copy(src_view.begin(), src_view.end(), src.begin());
     vmult(dst, src);
     std::copy(dst.begin(), dst.end(), dst_view.begin());
+  }
+
+  operator const FullMatrix<Number> &() const
+  {
+    AssertThrow(data, ExcMessage("data is uninitialized."));
+    if(!fullmatrix)
+    {
+      const auto & tmp = Tensors::matrix_to_table(*this);
+      fullmatrix       = std::make_shared<FullMatrix<Number>>(table_to_fullmatrix(tmp));
+    }
+    return *fullmatrix;
   }
 
   Number
@@ -504,7 +514,10 @@ private:
   std::shared_ptr<const MatrixFree<dim, Number>> data;
   Laplace::EquationData                          equation_data;
   mutable std::vector<TimeInfo>                  time_infos;
+  mutable std::shared_ptr<FullMatrix<Number>>    fullmatrix;
 };
+
+
 
 template<int dim, int fe_degree, typename Number>
 void
@@ -512,6 +525,7 @@ Operator<dim, fe_degree, Number>::clear()
 {
   data.reset();
   time_infos.clear();
+  fullmatrix.reset();
 }
 
 
@@ -561,7 +575,7 @@ types::global_dof_index
 Operator<dim, fe_degree, Number>::m() const
 {
   Assert(data.get() != nullptr, ExcNotInitialized());
-  return data->get_dof_handler().n_dofs();
+  return data->get_vector_partitioner()->size();
 }
 
 
@@ -796,7 +810,7 @@ struct CombinedOperator : public MF::Operator<dim, fe_degree, Number>,
  * the negative Laplacian:
  *
  * (MF) MatrixFree
- * (FD) FastDiagonalization // TODO
+ * (FD) FastDiagonalization
  */
 namespace CFEM
 {
@@ -948,6 +962,16 @@ public:
 
   using Base::Tvmult;
 
+  operator const FullMatrix<Number> &() const
+  {
+    if(!fullmatrix)
+    {
+      const auto & tmp = Tensors::matrix_to_table(*this);
+      fullmatrix       = std::make_shared<FullMatrix<Number>>(table_to_fullmatrix(tmp));
+    }
+    return *fullmatrix;
+  }
+
 protected:
   void
   apply_add(LinearAlgebra::distributed::Vector<Number> &       dst,
@@ -964,6 +988,7 @@ private:
   Laplace::EquationData                          equation_data;
   mutable std::vector<TimeInfo>                  time_infos;
   mutable std::shared_ptr<patch_evaluator_type>  eval_patch;
+  mutable std::shared_ptr<FullMatrix<Number>>    fullmatrix;
 };
 
 
@@ -972,6 +997,7 @@ template<int dim, int fe_degree, typename Number>
 void
 Operator<dim, fe_degree, Number>::clear()
 {
+  fullmatrix.reset();
   mf_storage.reset();
   time_infos.clear();
   Base::clear();

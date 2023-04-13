@@ -59,7 +59,7 @@ namespace MW
 {
 using ::MW::ScratchData;
 
-using ::MW::CopyData;
+using ::MW::DoF::CopyData;
 
 using ::MW::compute_vcurl;
 
@@ -70,10 +70,10 @@ struct MatrixIntegrator
 {
   using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
 
-  MatrixIntegrator(const Function<dim> *  load_function_in,
-                   const Function<dim> *  analytical_solution_in,
-                   const Vector<double> * particular_solution,
-                   const EquationData &   equation_data_in)
+  MatrixIntegrator(const Function<dim> *                              load_function_in,
+                   const Function<dim> *                              analytical_solution_in,
+                   const LinearAlgebra::distributed::Vector<double> * particular_solution,
+                   const EquationData &                               equation_data_in)
     : load_function(load_function_in),
       analytical_solution(analytical_solution_in),
       discrete_solution(particular_solution),
@@ -102,10 +102,12 @@ struct MatrixIntegrator
                   ScratchData<dim> &   scratch_data,
                   CopyData &           copy_data) const;
 
-  const Function<dim> *  load_function;
-  const Function<dim> *  analytical_solution;
-  const Vector<double> * discrete_solution;
-  const EquationData     equation_data;
+  const Function<dim> *                              load_function;
+  const Function<dim> *                              analytical_solution;
+  const LinearAlgebra::distributed::Vector<double> * discrete_solution;
+  const EquationData                                 equation_data;
+
+  const unsigned int proc_no = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
 };
 
 template<int dim, bool is_multigrid, bool is_stream>
@@ -114,29 +116,31 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::cell_worker(const IteratorType &
                                                             ScratchData<dim> &   scratch_data,
                                                             CopyData &           copy_data) const
 {
-  copy_data.cell_matrix = 0.;
-  copy_data.cell_rhs    = 0.;
+  AssertDimension(copy_data.cell_data.size(), 0U);
+  copy_data.cell_data.clear();
 
   FEValues<dim> & fe_values = scratch_data.fe_values;
   fe_values.reinit(cell);
 
-  cell->get_active_or_mg_dof_indices(copy_data.local_dof_indices);
+  const unsigned int n_dofs_per_cell = scratch_data.fe_values.get_fe().dofs_per_cell;
 
-  const unsigned int dofs_per_cell = scratch_data.fe_values.get_fe().dofs_per_cell;
+  auto & cell_data = copy_data.cell_data.emplace_back(n_dofs_per_cell);
 
-  for(unsigned int qpoint = 0; qpoint < fe_values.n_quadrature_points; ++qpoint)
+  cell->get_active_or_mg_dof_indices(cell_data.dof_indices);
+
+  for(unsigned int q = 0; q < fe_values.n_quadrature_points; ++q)
   {
-    for(unsigned int i = 0; i < dofs_per_cell; ++i)
+    for(unsigned int i = 0; i < n_dofs_per_cell; ++i)
     {
-      const Tensor<2, dim> hessian_i = fe_values.shape_hessian(i, qpoint);
+      const Tensor<2, dim> hessian_i = fe_values.shape_hessian(i, q);
 
-      for(unsigned int j = 0; j < dofs_per_cell; ++j)
+      for(unsigned int j = 0; j < n_dofs_per_cell; ++j)
       {
-        const Tensor<2, dim> hessian_j = fe_values.shape_hessian(j, qpoint);
+        const Tensor<2, dim> hessian_j = fe_values.shape_hessian(j, q);
 
-        copy_data.cell_matrix(i, j) += scalar_product(hessian_i,   // nabla^2 phi_i(x)
-                                                      hessian_j) * // nabla^2 phi_j(x)
-                                       fe_values.JxW(qpoint);      // dx
+        cell_data.matrix(i, j) += scalar_product(hessian_i,   // nabla^2 phi_i(x)
+                                                 hessian_j) * // nabla^2 phi_j(x)
+                                  fe_values.JxW(q);           // dx
       }
 
       if(!is_multigrid)
@@ -144,20 +148,19 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::cell_worker(const IteratorType &
         if(!is_stream)
         {
           AssertDimension(load_function->n_components, 1U);
-          copy_data.cell_rhs(i) +=
-            fe_values.shape_value(i, qpoint) *                         // phi_i(x)
-            load_function->value(fe_values.quadrature_point(qpoint)) * // f(x)
-            fe_values.JxW(qpoint);                                     // dx
+          cell_data.rhs(i) += fe_values.shape_value(i, q) *                         // phi_i(x)
+                              load_function->value(fe_values.quadrature_point(q)) * // f(x)
+                              fe_values.JxW(q);                                     // dx
         }
         else
         {
           AssertDimension(load_function->n_components, dim);
-          const auto &   curl_phi_i = compute_vcurl(fe_values, i, qpoint);
+          const auto &   curl_phi_i = compute_vcurl(fe_values, i, q);
           Tensor<1, dim> f;
           for(auto c = 0U; c < dim; ++c)
-            f[c] = load_function->value(fe_values.quadrature_point(qpoint), c);
+            f[c] = load_function->value(fe_values.quadrature_point(q), c);
 
-          copy_data.cell_rhs(i) += f * curl_phi_i * fe_values.JxW(qpoint);
+          cell_data.rhs(i) += f * curl_phi_i * fe_values.JxW(q);
         }
       }
     }
@@ -169,14 +172,15 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::cell_worker(const IteratorType &
   /// left with finding a homogeneous solution u based on this right hand side.
   if(!is_multigrid)
   {
-    Vector<double> u0(copy_data.local_dof_indices.size());
+    Vector<double> u0(cell_data.dof_indices.size());
     for(auto i = 0U; i < u0.size(); ++i)
-      u0(i) = (*discrete_solution)(copy_data.local_dof_indices[i]);
-    Vector<double> w0(copy_data.local_dof_indices.size());
-    copy_data.cell_matrix.vmult(w0, u0);
-    copy_data.cell_rhs -= w0;
+      u0(i) = (*discrete_solution)(cell_data.dof_indices[i]);
+    Vector<double> w0(cell_data.dof_indices.size());
+    cell_data.matrix.vmult(w0, u0);
+    cell_data.rhs -= w0;
   }
 }
+
 
 template<int dim, bool is_multigrid, bool is_stream>
 void
@@ -192,48 +196,42 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::face_worker(const IteratorType &
   FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
   fe_interface_values.reinit(cell, f, sf, ncell, nf, nsf);
 
-  copy_data.face_data.emplace_back();
-  CopyData::FaceData & copy_data_face = copy_data.face_data.back();
+  const unsigned int   n_interface_dofs = fe_interface_values.n_current_interface_dofs();
+  CopyData::FaceData & copy_data_face   = copy_data.face_data.emplace_back(n_interface_dofs);
 
-  copy_data_face.joint_dof_indices = fe_interface_values.get_interface_dof_indices();
-
-  const unsigned int n_interface_dofs = fe_interface_values.n_current_interface_dofs();
-  copy_data_face.cell_matrix.reinit(n_interface_dofs, n_interface_dofs);
+  copy_data_face.dof_indices = fe_interface_values.get_interface_dof_indices();
 
   const auto   h         = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
   const auto   nh        = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf]);
   const auto   fe_degree = scratch_data.fe_values.get_fe().degree;
   const double gamma_over_h =
     0.5 * equation_data.ip_factor * C0IP::compute_penalty_impl(fe_degree, h, nh);
-  // std::cout << "bi:face:gamma(: " << gamma_over_h << " " << fe_degree << " " << h << std::endl;
 
-  for(unsigned int qpoint = 0; qpoint < fe_interface_values.n_quadrature_points; ++qpoint)
+  for(unsigned int q = 0; q < fe_interface_values.n_quadrature_points; ++q)
   {
-    const auto & n = fe_interface_values.normal(qpoint);
+    const auto & n = fe_interface_values.normal(q);
 
     for(unsigned int i = 0; i < n_interface_dofs; ++i)
     {
-      const double av_hessian_i_dot_n_dot_n =
-        (fe_interface_values.average_hessian(i, qpoint) * n * n);
-      const double jump_grad_i_dot_n = (fe_interface_values.jump_gradient(i, qpoint) * n);
+      const double av_hessian_i_dot_n_dot_n = (fe_interface_values.average_hessian(i, q) * n * n);
+      const double jump_grad_i_dot_n        = (fe_interface_values.jump_gradient(i, q) * n);
 
       for(unsigned int j = 0; j < n_interface_dofs; ++j)
       {
-        const double av_hessian_j_dot_n_dot_n =
-          (fe_interface_values.average_hessian(j, qpoint) * n * n);
-        const double jump_grad_j_dot_n = (fe_interface_values.jump_gradient(j, qpoint) * n);
+        const double av_hessian_j_dot_n_dot_n = (fe_interface_values.average_hessian(j, q) * n * n);
+        const double jump_grad_j_dot_n        = (fe_interface_values.jump_gradient(j, q) * n);
 
-        copy_data_face.cell_matrix(i, j) += (-av_hessian_i_dot_n_dot_n       // - {grad^2 v n n
-                                                                             //
-                                               * jump_grad_j_dot_n           // [grad u n]
-                                             - av_hessian_j_dot_n_dot_n      // - {grad^2 u n n
-                                                                             //
-                                                 * jump_grad_i_dot_n         // [grad v n]
-                                             +                               // +
-                                             gamma_over_h *                  // gamma/h
-                                               jump_grad_i_dot_n *           // [grad v n]
-                                               jump_grad_j_dot_n) *          // [grad u n]
-                                            fe_interface_values.JxW(qpoint); // dx
+        copy_data_face.matrix(i, j) += (-av_hessian_i_dot_n_dot_n  // - {grad^2 v n n
+                                                                   //
+                                          * jump_grad_j_dot_n      // [grad u n]
+                                        - av_hessian_j_dot_n_dot_n // - {grad^2 u n n
+                                                                   //
+                                            * jump_grad_i_dot_n    // [grad v n]
+                                        +                          // +
+                                        gamma_over_h *             // gamma/h
+                                          jump_grad_i_dot_n *      // [grad v n]
+                                          jump_grad_j_dot_n) *     // [grad u n]
+                                       fe_interface_values.JxW(q); // dx
       }
     }
   }
@@ -249,16 +247,18 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::face_worker(const IteratorType &
     /// Particular solution u0 is only non-zero at the physical boundary.
     if(cell_is_at_boundary || neighbor_is_at_boundary)
     {
-      AssertDimension(n_interface_dofs, copy_data_face.joint_dof_indices.size());
-      Vector<double> u0(copy_data_face.joint_dof_indices.size());
+      AssertDimension(n_interface_dofs, copy_data_face.dof_indices.size());
+      AssertDimension(n_interface_dofs, copy_data_face.rhs.size());
+      Vector<double> u0(copy_data_face.dof_indices.size());
       for(auto i = 0U; i < u0.size(); ++i)
-        u0(i) = (*discrete_solution)(copy_data_face.joint_dof_indices[i]);
-      copy_data_face.cell_rhs.reinit(u0.size());
-      copy_data_face.cell_matrix.vmult(copy_data_face.cell_rhs, u0);
-      copy_data_face.cell_rhs *= -1.;
+        u0(i) = (*discrete_solution)(copy_data_face.dof_indices[i]);
+      Vector<double> w0(copy_data_face.dof_indices.size());
+      copy_data_face.matrix.vmult(w0, u0);
+      copy_data_face.rhs -= w0;
     }
   }
 }
+
 
 template<int dim, bool is_multigrid, bool is_stream>
 void
@@ -269,65 +269,64 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::boundary_worker(const IteratorTy
 {
   FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
   fe_interface_values.reinit(cell, face_no);
-  const auto & q_points = fe_interface_values.get_quadrature_points();
 
-  copy_data.face_data.emplace_back();
-  CopyData::FaceData & copy_data_face = copy_data.face_data.back();
+  const unsigned int n_interface_dofs = fe_interface_values.n_current_interface_dofs();
 
-  const unsigned int n_dofs        = fe_interface_values.n_current_interface_dofs();
-  copy_data_face.joint_dof_indices = fe_interface_values.get_interface_dof_indices();
+  CopyData::FaceData & copy_data_face = copy_data.face_data.emplace_back(n_interface_dofs);
 
-  copy_data_face.cell_matrix.reinit(n_dofs, n_dofs);
+  copy_data_face.dof_indices = fe_interface_values.get_interface_dof_indices();
 
-  const std::vector<double> &         JxW     = fe_interface_values.get_JxW_values();
-  const std::vector<Tensor<1, dim>> & normals = fe_interface_values.get_normal_vectors();
+  const auto &                quadrature_points = fe_interface_values.get_quadrature_points();
+  const std::vector<double> & JxW               = fe_interface_values.get_JxW_values();
+  const std::vector<Tensor<1, dim>> & normals   = fe_interface_values.get_normal_vectors();
 
-  std::vector<Tensor<1, dim>> exact_gradients(q_points.size());
-  analytical_solution->gradient_list(q_points, exact_gradients);
+  std::vector<Tensor<1, dim>> exact_gradients(quadrature_points.size());
+  if(!is_multigrid)
+  {
+    Assert(analytical_solution, ExcMessage("Did you initialize analytical_solution?"));
+    analytical_solution->gradient_list(quadrature_points, exact_gradients);
+  }
 
   const auto   h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
   const auto   fe_degree    = scratch_data.fe_values.get_fe().degree;
   const double gamma_over_h = equation_data.ip_factor * C0IP::compute_penalty_impl(fe_degree, h, h);
-  // std::cout << "bi:bdry:gamma: " << gamma_over_h << " " << fe_degree << " " << h << std::endl;
 
-  for(unsigned int qpoint = 0; qpoint < q_points.size(); ++qpoint)
+  for(unsigned int q = 0; q < quadrature_points.size(); ++q)
   {
-    const auto & n = normals[qpoint];
+    const auto & n = normals[q];
 
-    for(unsigned int i = 0; i < n_dofs; ++i)
+    for(unsigned int i = 0; i < n_interface_dofs; ++i)
     {
-      const double av_hessian_i_dot_n_dot_n =
-        (fe_interface_values.average_hessian(i, qpoint) * n * n);
-      const double jump_grad_i_dot_n = (fe_interface_values.jump_gradient(i, qpoint) * n);
+      const double av_hessian_i_dot_n_dot_n = (fe_interface_values.average_hessian(i, q) * n * n);
+      const double jump_grad_i_dot_n        = (fe_interface_values.jump_gradient(i, q) * n);
 
-      for(unsigned int j = 0; j < n_dofs; ++j)
+      for(unsigned int j = 0; j < n_interface_dofs; ++j)
       {
-        const double av_hessian_j_dot_n_dot_n =
-          (fe_interface_values.average_hessian(j, qpoint) * n * n);
-        const double jump_grad_j_dot_n = (fe_interface_values.jump_gradient(j, qpoint) * n);
+        const double av_hessian_j_dot_n_dot_n = (fe_interface_values.average_hessian(j, q) * n * n);
+        const double jump_grad_j_dot_n        = (fe_interface_values.jump_gradient(j, q) * n);
 
-        copy_data_face.cell_matrix(i, j) += (-av_hessian_i_dot_n_dot_n  // - {grad^2 v n n}
-                                               * jump_grad_j_dot_n      //   [grad u n]
-                                                                        //
-                                             - av_hessian_j_dot_n_dot_n // - {grad^2 u n n}
-                                                 * jump_grad_i_dot_n    //   [grad v n]
-                                                                        //
-                                             + gamma_over_h             //  gamma/h
-                                                 * jump_grad_i_dot_n    // [grad v n]
-                                                 * jump_grad_j_dot_n    // [grad u n]
-                                             ) *
-                                            JxW[qpoint]; // dx
+        copy_data_face.matrix(i, j) += (-av_hessian_i_dot_n_dot_n  // - {grad^2 v n n}
+                                          * jump_grad_j_dot_n      //   [grad u n]
+                                                                   //
+                                        - av_hessian_j_dot_n_dot_n // - {grad^2 u n n}
+                                            * jump_grad_i_dot_n    //   [grad v n]
+                                                                   //
+                                        + gamma_over_h             //  gamma/h
+                                            * jump_grad_i_dot_n    // [grad v n]
+                                            * jump_grad_j_dot_n    // [grad u n]
+                                        ) *
+                                       JxW[q]; // dx
       }
 
       if(!is_multigrid)
-        copy_data.cell_rhs(i) += (-av_hessian_i_dot_n_dot_n *       // - {grad^2 v n n }
-                                    (exact_gradients[qpoint] * n)   //   (grad u_exact . n)
-                                  +                                 // +
-                                  gamma_over_h                      //  gamma/h
-                                    * jump_grad_i_dot_n             // [grad v n]
-                                    * (exact_gradients[qpoint] * n) // (grad u_exact . n)
+        copy_data_face.rhs(i) += (-av_hessian_i_dot_n_dot_n *  // - {grad^2 v n n }
+                                    (exact_gradients[q] * n)   //   (grad u_exact . n)
+                                  +                            // +
+                                  gamma_over_h                 //  gamma/h
+                                    * jump_grad_i_dot_n        // [grad v n]
+                                    * (exact_gradients[q] * n) // (grad u_exact . n)
                                   ) *
-                                 JxW[qpoint]; // dx
+                                 JxW[q]; // dx
     }
   }
 
@@ -337,14 +336,12 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::boundary_worker(const IteratorTy
   /// left with finding a homogeneous solution u based on this right hand side.
   if(!is_multigrid)
   {
-    AssertDimension(n_dofs, copy_data.cell_rhs.size());
-    AssertDimension(n_dofs, copy_data.local_dof_indices.size());
-    Vector<double> u0(n_dofs);
-    for(auto i = 0U; i < n_dofs; ++i)
-      u0(i) = (*discrete_solution)(copy_data.local_dof_indices[i]);
+    Vector<double> u0(n_interface_dofs);
+    for(auto i = 0U; i < n_interface_dofs; ++i)
+      u0(i) = (*discrete_solution)(copy_data_face.dof_indices[i]);
     Vector<double> w0(u0.size());
-    copy_data_face.cell_matrix.vmult(w0, u0);
-    copy_data.cell_rhs -= w0;
+    copy_data_face.matrix.vmult(w0, u0);
+    copy_data_face.rhs -= w0;
   }
 }
 
@@ -358,10 +355,12 @@ template<int dim, int fe_degree, typename Number = double>
 class MatrixIntegrator
 {
 public:
-  using This                    = MatrixIntegrator<dim, fe_degree, Number>;
-  using value_type              = Number;
-  using transfer_type           = typename TPSS::PatchTransfer<dim, Number>;
+  using This          = MatrixIntegrator<dim, fe_degree, Number>;
+  using value_type    = Number;
+  using transfer_type = typename TPSS::PatchTransfer<dim, Number>;
+  /// TODO static bounds (template parameter)
   using matrix_type             = Tensors::TensorProductMatrix<dim, VectorizedArray<Number>>;
+  using matrix_state            = typename matrix_type::State;
   using evaluator_type          = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>;
   static constexpr int fe_order = fe_degree + 1;
 
@@ -383,28 +382,36 @@ public:
     evaluator_type eval(subdomain_handler); // common evaluator for test + ansatz
     for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
     {
-      /// compute 1D matrices
       eval.reinit(patch);
-      const auto mass_matrices      = assemble_mass_tensor(eval);
-      const auto bilaplace_matrices = assemble_bilaplace_tensor(eval);
-      const auto laplace_matrices   = assemble_laplace_tensor(eval);
 
-      /// store rank1 tensors of separable Kronecker representation
-      /// BxMxM + MxBxM + MxMxB
-      const auto & BxMxM = [&](const int direction) {
-        std::array<Table<2, VectorizedArray<Number>>, dim> kronecker_tensor;
-        for(auto d = 0; d < dim; ++d)
-          kronecker_tensor[d] = d == direction ? bilaplace_matrices[direction] : mass_matrices[d];
-        return kronecker_tensor;
-      };
       std::vector<std::array<Table<2, VectorizedArray<Number>>, dim>> rank1_tensors;
-      for(auto direction = 0; direction < dim; ++direction)
-        rank1_tensors.emplace_back(BxMxM(direction));
 
-      /// store rank1 tensors of mixed derivatives
-      /// 2(LxLxM + LxMxL + MxLxL)
-      if(equation_data.local_solver_variant == LocalSolverVariant::Exact)
+      if(equation_data.local_solver_variant == LocalSolverVariant::Bilaplacian)
       {
+        rank1_tensors.emplace_back(assemble_mass_tensor(eval));
+        rank1_tensors.emplace_back(assemble_bilaplace_tensor(eval));
+      }
+      else if(equation_data.local_solver_variant == LocalSolverVariant::Exact ||
+              equation_data.local_solver_variant == LocalSolverVariant::KSVD)
+      {
+        /// compute 1D matrices
+        const auto mass_matrices      = assemble_mass_tensor(eval);
+        const auto bilaplace_matrices = assemble_bilaplace_tensor(eval);
+        const auto laplace_matrices   = assemble_laplace_tensor(eval);
+
+        /// store rank1 tensors of separable Kronecker representation
+        /// BxMxM + MxBxM + MxMxB
+        const auto & BxMxM = [&](const int direction) {
+          std::array<Table<2, VectorizedArray<Number>>, dim> kronecker_tensor;
+          for(auto d = 0; d < dim; ++d)
+            kronecker_tensor[d] = d == direction ? bilaplace_matrices[direction] : mass_matrices[d];
+          return kronecker_tensor;
+        };
+        for(auto direction = 0; direction < dim; ++direction)
+          rank1_tensors.emplace_back(BxMxM(direction));
+
+        /// store rank1 tensors of mixed derivatives
+        /// 2(LxLxM + LxMxL + MxLxL)
         const auto & LxLxM = [&](const int direction1, const int direction2) {
           std::array<Table<2, VectorizedArray<Number>>, dim> kronecker_tensor;
           for(auto d = 0; d < dim; ++d)
@@ -416,10 +423,122 @@ public:
           for(auto direction2 = 0; direction2 < dim; ++direction2)
             if(direction1 != direction2)
               rank1_tensors.emplace_back(LxLxM(direction1, direction2));
+
+        AssertDimension(rank1_tensors.size(), 2 * dim);
       }
 
       /// submit vector of rank1 Kronecker tensors
-      local_matrices[patch].reinit(rank1_tensors);
+      switch(equation_data.local_solver_variant)
+      {
+        case LocalSolverVariant::Exact:
+          local_matrices[patch].reinit(rank1_tensors);
+          break;
+        case LocalSolverVariant::Bilaplacian:
+          local_matrices[patch].reinit(rank1_tensors, matrix_state::separable);
+          break;
+        case LocalSolverVariant::KSVD:
+        {
+          std::array<std::size_t, dim> rows, columns;
+          for(auto d = 0U; d < dim; ++d)
+          {
+            const auto & A_d = rank1_tensors.front()[d];
+            rows[d]          = A_d.size(0);
+            columns[d]       = A_d.size(1);
+          }
+
+
+          const auto ksvd_rank = *(equation_data.ksvd_tensor_indices.rbegin()) + 1;
+          AssertIndexRange(ksvd_rank, rank1_tensors.size() + 1);
+          auto ksvd_tensors =
+            Tensors::make_zero_rank1_tensors<dim, VectorizedArray<Number>>(ksvd_rank,
+                                                                           rows,
+                                                                           columns);
+          const auto & ksvd_singular_values =
+            compute_ksvd(rank1_tensors, ksvd_tensors, equation_data.n_lanczos_iterations);
+
+          std::vector<std::array<Table<2, VectorizedArray<Number>>, dim>> approximation;
+          for(auto i = 0U; i < ksvd_tensors.size(); ++i)
+            if(equation_data.ksvd_tensor_indices.find(i) !=
+               equation_data.ksvd_tensor_indices.cend())
+              approximation.emplace_back(ksvd_tensors[i]);
+
+          AssertDimension(equation_data.ksvd_tensor_indices.size(), approximation.size());
+
+          if(approximation.size() == 1U)
+          {
+            local_matrices[patch].reinit(approximation, matrix_state::rankone);
+          }
+
+          else if(approximation.size() == 2U)
+          {
+            /// first tensor must contain s.p.d. matrices ("mass matrices")
+            typename matrix_type::AdditionalData additional_data;
+            additional_data.state = matrix_state::ranktwo;
+
+            local_matrices[patch].reinit(approximation, additional_data);
+
+            const auto & tensor_of_eigenvalues = local_matrices[patch].get_eigenvalue_tensor();
+            const auto   eigenvalues_ksvd1 =
+              Tensors::kronecker_product<dim, VectorizedArray<Number>>(tensor_of_eigenvalues);
+
+            /// if the rank-2 KSVD isn't positive definite we scale the second
+            /// tensor of matrices by a factor \alpha (with 0 < \alpha < 1),
+            /// thus obtaing an approximation that is better than the best
+            /// rank-1 approximation but worse than the best rank-2
+            /// approximation. \alpha is computed at negligible costs due to the
+            /// specific eigendecomposition with tensor structure
+            if(equation_data.ksvd_tensor_indices == std::set<unsigned int>{0U, 1U})
+            {
+              VectorizedArray<Number> alpha(1.);
+              for(auto lane = 0U; lane < VectorizedArray<Number>::size(); ++lane)
+              {
+                // std::cout << "eigenvalues of KSVD[1]:\n"
+                //           << vector_to_string(alignedvector_to_vector(eigenvalues_ksvd1, lane))
+                //           << std::endl;
+                const auto   min_elem   = std::min_element(eigenvalues_ksvd1.begin(),
+                                                       eigenvalues_ksvd1.end(),
+                                                       [&](const auto & lhs, const auto & rhs) {
+                                                         return lhs[lane] < rhs[lane];
+                                                       });
+                const Number lambda_min = (*min_elem)[lane];
+
+                /// \alpha = -1 / ((1 + \epsilon) * \lambda_{min})
+                if(lambda_min < -0.99) // KSVD isn't positive definite
+                  alpha[lane] /= -(1. + equation_data.addition_to_min_eigenvalue) * lambda_min;
+                if(alpha[lane] > 1.)
+                  alpha[lane] = 0.99;
+              }
+
+              // std::cout << "alpha: " << varray_to_string(alpha) << std::endl;
+              Tensors::scaling<dim>(alpha, approximation.at(1U));
+              local_matrices[patch].reinit(approximation, additional_data);
+            }
+          }
+
+          else
+          {
+            local_matrices[patch].reinit(approximation);
+          }
+
+          // /// DEBUG
+          // const auto & [is_posdef, eigenvalues] =
+          //   LinAlg::is_positive_definite_impl(local_matrices[patch].as_inverse_table());
+          // if(!is_posdef.all())
+          // {
+          //   std::cout << "patch: " << patch << " " << is_posdef << std::endl;
+          //   for(auto lane = 0U; lane < VectorizedArray<Number>::size(); ++lane)
+          //     std::cout << "singular values of KSVD:\n"
+          //               << vector_to_string(alignedvector_to_vector(ksvd_singular_values, lane))
+          //               << "eigenvalues of inverse:\n"
+          //               << vector_to_string(alignedvector_to_vector(eigenvalues, lane))
+          //               << std::endl;
+          // }
+
+          break;
+        }
+        default:
+          AssertThrow(false, ExcMessage("Local solver isn't supported."));
+      }
     }
   }
 

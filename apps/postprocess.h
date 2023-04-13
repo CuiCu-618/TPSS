@@ -14,6 +14,7 @@
 #include <deal.II/numerics/data_postprocessor.h>
 
 
+
 struct PostProcessData
 {
   std::vector<double>                  average_reduction_system;
@@ -55,6 +56,16 @@ compute_fractional_steps(const ReductionControl & solver_control)
    *    rho^n_frac = reduction   <=>   n_frac = log(reduction)/log(rho)
    */
   const double n_frac = std::log(reduction) / std::log(rho);
+
+  /// n_frac should definitely not be larger than n. this can happen if the
+  /// iterative solver is stopped before the relative tolerance is reached.
+  AssertThrow(residual_n / residual_0 < reduction,
+              ExcLowerRangeType(reduction, residual_n / residual_0));
+  AssertThrow(n_frac <= (double)n, ExcLowerRangeType((double)n, n_frac));
+  /// if the reduction of the last step n is above average it might happen that
+  /// n_frac is smaller than (n-1). the subsequent assert should warn us if
+  /// n_frac is even smaller than (n-2).
+  AssertThrow((double)(n - 2) <= n_frac, ExcLowerRangeType(n_frac, (double)(n - 2)));
 
   return std::make_pair(n_frac, rho);
 }

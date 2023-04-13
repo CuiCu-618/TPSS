@@ -23,6 +23,8 @@
 
 using namespace dealii;
 
+
+/// TODO move to alignedlinalg.h ...
 template<typename Number>
 std::vector<std::complex<Number>>
 compute_eigenvalues(LAPACKFullMatrix<Number> & matrix)
@@ -39,6 +41,9 @@ compute_eigenvalues(LAPACKFullMatrix<Number> & matrix)
   return eigenvalues;
 }
 
+
+
+/// TODO move to alignedlinalg.h ...
 template<typename Number>
 std::vector<std::complex<Number>>
 compute_eigenvalues(const FullMatrix<Number> & matrix)
@@ -49,6 +54,9 @@ compute_eigenvalues(const FullMatrix<Number> & matrix)
   return compute_eigenvalues(lapack_matrix);
 }
 
+
+
+/// TODO move to alignedlinalg.h ...
 template<typename Number>
 Vector<Number>
 compute_eigenvalues_symm(LAPACKFullMatrix<Number> & matrix, FullMatrix<Number> & Q)
@@ -63,6 +71,9 @@ compute_eigenvalues_symm(LAPACKFullMatrix<Number> & matrix, FullMatrix<Number> &
   return eigenvalues;
 }
 
+
+
+/// TODO move to alignedlinalg.h ...
 template<typename Number>
 Vector<Number>
 compute_eigenvalues_symm(const FullMatrix<Number> & matrix, FullMatrix<Number> & Q)
@@ -72,6 +83,9 @@ compute_eigenvalues_symm(const FullMatrix<Number> & matrix, FullMatrix<Number> &
   return compute_eigenvalues_symm(lapack_matrix, Q);
 }
 
+
+
+/// TODO move to alignedlinalg.h ...
 /*
  * Compute generalized eigenvalues and eigenvectors given the generalized
  * eigenvalue problem A v = \lambda B v. Each column of Q represents an
@@ -99,6 +113,8 @@ compute_generalized_eigenvalues_symm(LAPACKFullMatrix<Number> & A,
 }
 
 
+
+/// TODO move to alignedlinalg.h ...
 template<typename Number>
 std::vector<Number>
 compute_generalized_eigenvalues_symm(const FullMatrix<Number> & A,
@@ -113,6 +129,8 @@ compute_generalized_eigenvalues_symm(const FullMatrix<Number> & A,
 }
 
 
+
+/// TODO move to alignedlinalg.h ...
 template<typename Number>
 std::vector<Number>
 compute_singular_values(LAPACKFullMatrix<Number> & matrix)
@@ -128,6 +146,8 @@ compute_singular_values(LAPACKFullMatrix<Number> & matrix)
 }
 
 
+
+/// TODO move to alignedlinalg.h ...
 template<typename Number>
 std::vector<Number>
 compute_singular_values(const FullMatrix<Number> & matrix)
@@ -139,6 +159,8 @@ compute_singular_values(const FullMatrix<Number> & matrix)
 }
 
 
+
+/// TODO move to alignedlinalg.h ...
 /**
  * Computes and returns the singular value decomposition A = U Sigma VT as a
  * triplet of matrices [U, Sigma, VT]. Note, that the input matrix @p matrix is
@@ -166,6 +188,8 @@ compute_svd(LAPACKFullMatrix<Number> & matrix)
 }
 
 
+
+/// TODO move to alignedlinalg.h ...
 /**
  * Computes the singular value decomposition A = U Sigma VT and returns the
  * inverse triplet of matrices [UT, Sigma^{-1}, V]. If singular values are below
@@ -176,7 +200,7 @@ compute_svd(LAPACKFullMatrix<Number> & matrix)
 template<typename Number>
 std::array<LAPACKFullMatrix<Number>, 3>
 compute_inverse_svd(LAPACKFullMatrix<Number> & matrix,
-                    const Number threshold = std::numeric_limits<Number>::epsilon() * 100.)
+                    const Number               threshold = zero_threshold<Number>)
 {
   matrix.compute_svd();
 
@@ -192,12 +216,14 @@ compute_inverse_svd(LAPACKFullMatrix<Number> & matrix,
   matrix.get_svd_vt().transpose(V);
   const unsigned int n_singular_values = std::min(matrix.m(), matrix.n());
   for(auto i = 0U; i < n_singular_values; ++i)
-    invSigma(i, i) = matrix.singular_value(i) < threshold ? 0. : 1. / matrix.singular_value(i);
+    invSigma(i, i) = inverse_scalar_if_impl(matrix.singular_value(i), threshold);
 
   return svd;
 }
 
 
+
+/// TODO move to alignedlinalg.h ...
 /**
  * Computes and returns the triple matrix-matrix-product X*Y*Z.
  */
@@ -215,6 +241,67 @@ merge_lapack_decomposition(const LAPACKFullMatrix<Number> & X,
 }
 
 
+
+/// TODO move to alignedlinalg.h ...
+/**
+ * Merges a matrix factorization of the form
+ *
+ *    U M V^T
+ *
+ * for default template parameters. If is_reverse is true,
+ *
+ *    U^T M V
+ *
+ * is computed instead.
+ */
+template<typename Number, bool is_reverse = false>
+FullMatrix<Number>
+merge_decomposition_impl(const FullMatrix<Number> & U,
+                         const FullMatrix<Number> & M,
+                         const FullMatrix<Number> & V)
+{
+  FullMatrix<Number> MVT_or_MV(M.m(), is_reverse ? V.n() : V.m());
+  if(is_reverse) // M V
+    M.mmult(MVT_or_MV, V);
+  else // M V^T
+    M.mTmult(MVT_or_MV, V);
+
+  FullMatrix<Number> UMVT_or_UTMV(is_reverse ? U.n() : U.m(), MVT_or_MV.n());
+  if(is_reverse) // U^T M V
+    U.Tmmult(UMVT_or_UTMV, MVT_or_MV);
+  else // U M V^T
+    U.mmult(UMVT_or_UTMV, MVT_or_MV);
+
+  return UMVT_or_UTMV;
+}
+
+
+/// TODO move to alignedlinalg.h ...
+/// computes U M V^T
+template<typename Number>
+FullMatrix<Number>
+merge_decomposition(const FullMatrix<Number> & U,
+                    const FullMatrix<Number> & M,
+                    const FullMatrix<Number> & V)
+{
+  return merge_decomposition_impl(U, M, V);
+}
+
+
+
+/// TODO move to alignedlinalg.h ...
+/// computes U^T M V
+template<typename Number>
+FullMatrix<Number>
+merge_reverse_decomposition(const FullMatrix<Number> & U,
+                            const FullMatrix<Number> & M,
+                            const FullMatrix<Number> & V)
+{
+  return merge_decomposition_impl<Number, true>(U, M, V);
+}
+
+
+
 template<typename T1, typename T2>
 std::ostream &
 operator<<(std::ostream & os, const std::pair<T1, T2> & pair)
@@ -223,11 +310,13 @@ operator<<(std::ostream & os, const std::pair<T1, T2> & pair)
 }
 
 
+
 std::string
 bool_to_str(const bool b)
 {
   return std::string(b ? "true" : "false");
 }
+
 
 
 Utilities::MPI::MinMaxAvg
@@ -242,12 +331,14 @@ operator/(const Utilities::MPI::MinMaxAvg & mma_in, const double t)
 }
 
 
+
 template<typename Number = double>
 Number
 make_random_value()
 {
   return static_cast<Number>(rand()) / RAND_MAX;
 }
+
 
 
 template<>
@@ -261,6 +352,7 @@ make_random_value()
 }
 
 
+
 template<typename VectorType>
 void
 fill_with_random_values(VectorType & vec)
@@ -270,6 +362,7 @@ fill_with_random_values(VectorType & vec)
 }
 
 
+
 template<typename ElementType>
 void
 fill_with_random_values(ArrayView<ElementType> view)
@@ -277,6 +370,7 @@ fill_with_random_values(ArrayView<ElementType> view)
   for(auto it = view.begin(); it != view.end(); ++it)
     *it = make_random_value<ElementType>();
 }
+
 
 
 template<typename Number>
@@ -289,12 +383,14 @@ fill_with_random_values(Table<2, Number> & table)
 }
 
 
+
 template<typename MatrixType, typename Number = typename MatrixType::value_type>
 void
 fill_matrix_with_random_values(MatrixType & matrix)
 {
   fill_matrix_with_random_values<MatrixType, Number>(matrix, matrix.m(), matrix.n());
 }
+
 
 
 template<typename MatrixType, typename Number = typename MatrixType::value_type>
@@ -310,6 +406,7 @@ fill_matrix_with_random_values(MatrixType &       matrix,
 }
 
 
+
 template<typename Number>
 Vector<Number>
 array_view_to_vector(const ArrayView<const Number> & view, const unsigned int dummy = 0)
@@ -317,6 +414,7 @@ array_view_to_vector(const ArrayView<const Number> & view, const unsigned int du
   (void)dummy;
   return Vector<Number>(view.cbegin(), view.cend());
 }
+
 
 
 template<typename Number>
@@ -332,6 +430,8 @@ array_view_to_vector(const ArrayView<const VectorizedArray<Number>> & view,
   return vec;
 }
 
+
+
 template<typename Number>
 Vector<Number>
 array_view_to_vector(const ArrayView<VectorizedArray<Number>> & view, const unsigned int lane = 0)
@@ -339,6 +439,8 @@ array_view_to_vector(const ArrayView<VectorizedArray<Number>> & view, const unsi
   ArrayView<const VectorizedArray<Number>> cview(view.begin(), view.size());
   return array_view_to_vector(cview, lane);
 }
+
+
 
 template<typename T>
 std::string
@@ -356,6 +458,7 @@ vector_to_string(const std::vector<T> & vector)
 }
 
 
+
 template<typename E>
 std::vector<const E *>
 to_vector_of_ptrs(const std::vector<E> & vec)
@@ -368,6 +471,7 @@ to_vector_of_ptrs(const std::vector<E> & vec)
 }
 
 
+
 template<typename T>
 std::string
 set_to_string(const std::set<T> & set)
@@ -375,6 +479,7 @@ set_to_string(const std::set<T> & set)
   std::vector<T> set_as_vector(set.cbegin(), set.cend());
   return vector_to_string(set_as_vector);
 }
+
 
 
 class NullStreambuf : public std::streambuf
@@ -389,6 +494,7 @@ protected:
     return (c == traits_type::eof()) ? '\0' : c;
   }
 };
+
 
 
 class NullOStream : private NullStreambuf, public std::ostream
@@ -406,6 +512,7 @@ public:
 };
 
 
+
 template<typename FloatType>
 std::string
 to_string_conditional(const FloatType value)
@@ -421,6 +528,7 @@ to_string_conditional(const FloatType value)
 }
 
 
+
 std::string
 extend_string(std::string label, const std::size_t size)
 {
@@ -430,6 +538,7 @@ extend_string(std::string label, const std::size_t size)
     label += " ";
   return label;
 }
+
 
 
 template<typename Number>
@@ -442,12 +551,14 @@ fstring_column_default(const Number value, const unsigned size)
 }
 
 
+
 std::string
 fstring_column(const double value, const unsigned size)
 {
   auto str{std::move(to_string_conditional(value))};
   return (extend_string(str, size));
 }
+
 
 
 std::string
@@ -458,11 +569,13 @@ fstring_column(const float value, const unsigned size)
 }
 
 
+
 std::string
 fstring_column(const int value, const unsigned size)
 {
   return fstring_column_default<int>(value, size);
 }
+
 
 
 std::string
@@ -472,11 +585,13 @@ fstring_column(const unsigned int value, const unsigned size)
 }
 
 
+
 std::string
 fstring_column(const long unsigned int value, const unsigned size)
 {
   return fstring_column_default<long unsigned int>(value, size);
 }
+
 
 
 std::string
@@ -486,6 +601,7 @@ fstring_column(const long long unsigned int value, const unsigned size)
 }
 
 
+
 std::string
 fstring_column(const std::string value, const unsigned size)
 {
@@ -493,11 +609,13 @@ fstring_column(const std::string value, const unsigned size)
 }
 
 
+
 std::string
 fstring_column(const char value[], const unsigned size)
 {
   return fstring_column_default<std::string>(value, size);
 }
+
 
 
 std::string
@@ -509,6 +627,7 @@ fstring_column(const bool value, const unsigned size)
 }
 
 
+
 template<typename T>
 std::string
 fstring_column(const std::vector<T> & vec_value, const unsigned size)
@@ -518,6 +637,7 @@ fstring_column(const std::vector<T> & vec_value, const unsigned size)
     ostrstream << fstring_column(value, size);
   return ostrstream.str();
 }
+
 
 
 template<typename OSTREAM>
@@ -567,12 +687,15 @@ struct Printer
 };
 
 
+
 template<typename Arg>
 void
 print_row(ConditionalOStream & out, const unsigned size, Arg && arg)
 {
   Printer<ConditionalOStream>{}.print_row_impl(out, size, std::forward<Arg>(arg));
 }
+
+
 
 template<typename... Args>
 void
@@ -581,12 +704,16 @@ print_row(ConditionalOStream & out, const unsigned size, Args &&... args)
   Printer<ConditionalOStream>{}.print_row_impl(out, size, std::forward<Args>(args)...);
 }
 
+
+
 template<typename Arg>
 void
 print_row(std::ostream & out, const unsigned size, Arg && arg)
 {
   Printer<std::ostream>{}.print_row_impl(out, size, std::forward<Arg>(arg));
 }
+
+
 
 template<typename... Args>
 void
@@ -595,12 +722,16 @@ print_row(std::ostream & out, const unsigned size, Args &&... args)
   Printer<std::ostream>{}.print_row_impl(out, size, std::forward<Args>(args)...);
 }
 
+
+
 template<typename Arg>
 void
 print_row_variable(ConditionalOStream & out, Arg && arg)
 {
   Printer<ConditionalOStream>{}.print_row_variable_impl(out, std::forward<Arg>(arg));
 }
+
+
 
 template<typename Arg>
 void
@@ -609,12 +740,16 @@ print_row_variable(ConditionalOStream & out, const unsigned size, Arg && arg)
   Printer<ConditionalOStream>{}.print_row_variable_impl(out, size, std::forward<Arg>(arg));
 }
 
+
+
 template<typename... Args>
 void
 print_row_variable(ConditionalOStream & out, Args &&... args)
 {
   Printer<ConditionalOStream>{}.print_row_variable_impl(out, std::forward<Args>(args)...);
 }
+
+
 
 template<typename Arg>
 void
@@ -623,12 +758,16 @@ print_row_variable(std::ostream & out, Arg && arg)
   Printer<std::ostream>{}.print_row_variable_impl(out, std::forward<Arg>(arg));
 }
 
+
+
 template<typename Arg>
 void
 print_row_variable(std::ostream & out, const unsigned size, Arg && arg)
 {
   Printer<std::ostream>{}.print_row_variable_impl(out, size, std::forward<Arg>(arg));
 }
+
+
 
 template<typename... Args>
 void

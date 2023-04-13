@@ -15,362 +15,137 @@
 #include "TPSS.h"
 #include "alignedlinalg.h"
 #include "generic_functionalities.h"
+#include "tensor_indices.h"
+#include "vectorization.h"
 
 #include <sstream>
 
 using namespace dealii;
 
-// /// TEST: storage is row-major
-// class
-// MyTable : public TableBase<2, double>
-// {
-// public:
-//   using Base = TableBase<2, double>;
-//   using Base::reinit;
-
-//   unsigned int
-//   my_position(const TableIndices<2> & indices) const
-//   {
-//     return Base::position(indices);
-//   }
-// };
 
 
 namespace Tensors
 {
-template<int order, typename IntType = unsigned int>
-std::string
-multiindex_to_string(const std::array<IntType, order> multiindex)
-{
-  std::ostringstream osstream;
-  osstream << "(";
-  static_assert(order > 0, "0-order multiindex is not permitted.");
-  for(IntType k = 0; k < multiindex.size() - 1; ++k)
-    osstream << multiindex[k] << ", ";
-  osstream << multiindex.back() << ")";
-  return osstream.str();
-}
-
-
-/*
- * transforms an (anisotropic) multi-index into the canonical uni-index with
- * respect to lexicographical order. That is the first index of the multi-index
- * runs faster than second and so on.
- *
- * order : the order of the multi-index
- * sizes  : (anisotropic) size of each independent variable (mode)
+/**
+ * Generates a tensor of zero matrices with order @p order. The number of rows and
+ * columns are defined by @p rows and @p columns for each tensor direction.
  */
-template<int order, typename IntType = unsigned int>
-IntType
-multi_to_uniindex(const std::array<IntType, order> & multiindex,
-                  const std::array<IntType, order> & sizes)
+template<int order, typename Number, typename IntType = std::size_t>
+std::array<Table<2, Number>, order>
+make_zero_tensor(const std::array<IntType, order> rows, const std::array<IntType, order> columns)
 {
-  for(IntType k = 0; k < multiindex.size(); ++k)
-    AssertIndexRange(multiindex[k], sizes[k]);
-  IntType uniindex{0};
-  for(int k = order - 1; k >= 0; --k)
-  {
-    // has no effect on purpose for k == order-1 (uniindex is zero)
-    uniindex *= sizes[k];
-    uniindex += multiindex[k];
-  }
-  const auto n_elem = std::accumulate(sizes.cbegin(), sizes.cend(), 1, std::multiplies<IntType>());
-  (void)n_elem;
-  AssertIndexRange(uniindex, n_elem);
-
-  return uniindex;
+  std::array<Table<2, Number>, order> tensor;
+  for(auto d = 0U; d < order; ++d)
+    tensor[d].reinit(rows[d], columns[d]);
+  return tensor;
 }
 
 
-/*
- * transforms an (isotropic) multi-index into the canonical uni-index with
- * respect to lexicographical order. That is the first index of the multi-index
- * runs faster than second and so on.
- *
- * order : the order of the multi-index
- * size  : isotropic size of each index set (mode)
+
+/**
+ * Generates a vector of rank-1 tensors of zero matrices with order @p
+ * order. Matrices are sized according to @p rows and @p columns (see
+ * make_zero_tensor() for more details).
  */
-template<int order, typename IntType = unsigned int>
-IntType
-multi_to_uniindex(const std::array<IntType, order> & multiindex, const IntType size)
+template<int order, typename Number, typename IntType = std::size_t>
+std::vector<std::array<Table<2, Number>, order>>
+make_zero_rank1_tensors(const std::size_t                rank,
+                        const std::array<IntType, order> rows,
+                        const std::array<IntType, order> columns)
 {
-  std::array<IntType, order> sizes;
-  sizes.fill(size);
-  return multi_to_uniindex<order>(multiindex, sizes);
+  std::vector<std::array<Table<2, Number>, order>> rank1_tensors;
+  std::fill_n(std::back_inserter(rank1_tensors),
+              rank,
+              make_zero_tensor<order, Number, IntType>(rows, columns));
+  return rank1_tensors;
 }
 
 
-/*
- * transforms an uni-index into the canonical (anisotropic) multi-index with
- * respect to lexicographical order. That is the first index of the multi-index
- * runs faster than second and so on.
- *
- * order : the order of the multi-index
- * sizes : sizes of each independent variable (mode)
+
+/**
+ * Generates a tensor of "identity" matrices with order @p order. The number of
+ * rows and columns are defined by @p rows and @p columns for each tensor
+ * direction. For non-square matrices only the diagonal of the square with
+ * north-west corner attached to the first matrix element is filled with ones.
  */
-template<int order, typename IntType = unsigned int>
-std::array<IntType, order>
-uni_to_multiindex(IntType index, const std::array<IntType, order> & sizes)
+template<int order, typename Number, typename IntType = std::size_t>
+std::array<Table<2, Number>, order>
+make_id_tensor(const std::array<IntType, order> rows, const std::array<IntType, order> columns)
 {
-  const auto n_elem = std::accumulate(sizes.cbegin(), sizes.cend(), 1, std::multiplies<IntType>());
-  (void)n_elem;
-  AssertIndexRange(index, n_elem);
-  std::array<IntType, order> multiindex;
-  for(int k = 0; k < order; ++k)
-  {
-    multiindex[k] = index % sizes[k];
-    index         = index / sizes[k];
-  }
-  Assert(index == 0, ExcMessage("Uni-index has remainder after multi-index extraction."));
-  for(IntType k = 0; k < multiindex.size(); ++k)
-    AssertIndexRange(multiindex[k], sizes[k]);
+  std::array<Table<2, Number>, order> tensor;
+  for(auto d = 0U; d < order; ++d)
+    tensor[d].reinit(rows[d], columns[d]);
 
-  return multiindex;
+  for(auto & matrix : tensor)
+    for(auto i = 0U; i < std::min(matrix.size(0), matrix.size(1)); ++i)
+      matrix(i, i) = 1.;
+
+  return tensor;
 }
 
 
-/*
- * transforms an uni-index into the canonical (isotropic) multi-index with
- * respect to lexicographical order. That is the first index of the multi-index
- * runs faster than second and so on.
- *
- * order : the order of the multi-index
- * size  : isotropic size of each index set (mode)
+
+/**
+ * Compute the Kronecker product of two matrices. Each input
+ * MatrixType must contain at least the operator(n,m) to acces the
+ * elements at row n and column m.
  */
-template<int order, typename IntType = unsigned int>
-std::array<IntType, order>
-uni_to_multiindex(IntType index, const IntType size)
+template<typename MatrixTypeIn1, typename MatrixTypeIn2, typename MatrixTypeOut = MatrixTypeIn1>
+typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type
+kronecker_product(MatrixTypeIn1 && left_matrix, MatrixTypeIn2 && right_matrix)
 {
-  std::array<IntType, order> sizes;
-  sizes.fill(size);
-  return uni_to_multiindex<order>(index, sizes);
+  auto && matrix1 = std::forward<MatrixTypeIn1>(left_matrix);
+  auto && matrix0 = std::forward<MatrixTypeIn2>(right_matrix);
+
+  const unsigned int n_rows0 = matrix0.n_rows();
+  const unsigned int n_cols0 = matrix0.n_cols();
+  const unsigned int n_rows1 = matrix1.n_rows();
+  const unsigned int n_cols1 = matrix1.n_cols();
+  typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type matrix_out;
+  matrix_out.reinit(n_rows1 * n_rows0, n_cols1 * n_cols0);
+
+  for(unsigned int i1 = 0; i1 < n_rows1; ++i1)
+    for(unsigned int j1 = 0; j1 < n_cols1; ++j1)
+      for(unsigned int i0 = 0; i0 < n_rows0; ++i0)
+        for(unsigned int j0 = 0; j0 < n_cols0; ++j0)
+          matrix_out(i1 * n_rows0 + i0, j1 * n_cols0 + j0) = matrix1(i1, j1) * matrix0(i0, j0);
+
+  return matrix_out;
 }
 
 
-/*
- * returns the fibre of (uni)-indices of an @p order -order (isotropic)
- * multiindex running along the @p mode mode with respect to lexicographical
- * order. That is the first index of the multi-index runs faster than second and
- * so on.
- *
- * order : the order of the multi-index
- * mode  : traversing mode of the fibre
- * size  : isotropic size of each index set (mode)
+
+/**
+ * Compute the Kronecker product of tensors of diagonal matrices for arbitrary
+ * order @p order. To be memory efficientonly the diagonal of univariate
+ * matrices and kronecker product matrix is passed or returned as vector,
+ * respectively.
  */
-template<int order, typename IntType = unsigned int>
-std::vector<IntType>
-index_fibre(const std::array<IntType, order - 1> index, const int mode, const IntType size)
+template<int order, typename Number>
+AlignedVector<Number>
+kronecker_product(const std::array<AlignedVector<Number>, order> & diagonals_1d)
 {
-  AssertIndexRange(mode, order);
-  for(IntType k = 0; k < index.size(); ++k)
-    AssertIndexRange(index[k], size);
-  std::vector<IntType>       fibre;
-  std::array<IntType, order> multiindex;
-  // std::cout << Tensors::multiindex_to_string<order-1>(index) << std::endl;
-  auto elem = index.cbegin();
-  std::generate(multiindex.begin(), multiindex.end(), [&, mode, k = int{0}]() mutable {
-    return (k++ != mode) ? *(elem++) : 0U;
-  });
-  for(IntType i = 0; i < size; ++i)
+  std::array<unsigned int, order> sizes;
+  for(auto d = 0U; d < order; ++d)
+    sizes[d] = diagonals_1d[d].size();
+  TensorHelper<order, unsigned int> tensor_rows(sizes);
+
+  AlignedVector<Number> diagonal(tensor_rows.n_flat());
+  Number                elem_i(0.);
+  for(auto i = 0U; i < diagonal.size(); ++i)
   {
-    multiindex[mode] = i;
-    // std::cout << Tensors::multiindex_to_string<order>(multiindex) << std::endl;
-    fibre.push_back(multi_to_uniindex<order>(multiindex, size));
+    const auto & ii = tensor_rows.multi_index(i);
+
+    elem_i = diagonals_1d[0][ii[0]];
+    for(auto d = 1; d < order; ++d)
+      elem_i *= diagonals_1d[d][ii[d]];
+
+    diagonal[i] = elem_i;
   }
-  return fibre;
+
+  return diagonal;
 }
 
-
-
-// TODO could be constexpr?
-template<int order, typename IntType = unsigned int>
-struct TensorHelper
-{
-  TensorHelper(const std::array<IntType, order> & sizes) : n(sizes)
-  {
-  }
-
-  TensorHelper(const IntType size)
-    : n([size]() {
-        std::array<IntType, order> sizes;
-        sizes.fill(size);
-        return sizes;
-      }())
-  {
-  }
-
-
-  /**
-   * If we think of the @p order dimensional index set as hypercube, then, we
-   * have 2*order hyperfaces of order @p order-1 following a lexicographical
-   * ordering, see for example dealii::GeometryInfo. In analogy to the
-   * one-dimensional case we refer to hyperfaces as edge numbers @p edge_no. If
-   * index @p index is in the interior of the imaginary hypercube, the set of
-   * edge numbers is empty. If the index is located at a vertex dim edge numbers
-   * are returned.
-   */
-  std::vector<unsigned int>
-  get_edge_numbers(const IntType index) const
-  {
-    AssertIndexRange(index, n_flat());
-    std::vector<unsigned int> edge_numbers;
-    const auto &              multi_index = this->multi_index(index);
-    for(auto mode = 0U; mode < order; ++mode)
-    {
-      const auto edge_no_1d = get_edge_no_1d(multi_index, mode);
-      if(edge_no_1d != -1U)
-        edge_numbers.emplace_back(2 * mode + edge_no_1d);
-    }
-    return edge_numbers;
-  }
-
-  /**
-   * Returns the one-dimensional edge number of the @p mode'th mode of
-   * multi-index @p multi_index. That is, 0 for the first, 1 for the last and -1
-   * for all interior indices with respect to mode @p mode is reutrned.
-   */
-  unsigned int
-  get_edge_no_1d(const std::array<IntType, order> & multi_index, const unsigned int mode) const
-  {
-    AssertIndexRange(mode, order);
-    if(is_first_index_1d(multi_index, mode))
-      return 0;
-    else if(is_last_index_1d(multi_index, mode))
-      return 1;
-    return -1;
-  }
-
-  bool
-  is_edge_index(const IntType index) const
-  {
-    AssertIndexRange(index, n_flat());
-    const auto & multiindex = this->multi_index(index);
-    for(auto mode = 0U; mode < order; ++mode)
-      if(is_edge_index_1d(multiindex, mode))
-        return true;
-    return false;
-  }
-
-  bool
-  is_first_index_1d(const std::array<IntType, order> & multi_index, const unsigned int mode) const
-  {
-    AssertIndexRange(mode, order);
-    return multi_index[mode] == static_cast<IntType>(0);
-  }
-
-  bool
-  is_last_index_1d(const std::array<IntType, order> & multi_index, const unsigned int mode) const
-  {
-    AssertIndexRange(mode, order);
-    return multi_index[mode] == (size(mode) - 1);
-  }
-
-  bool
-  is_edge_index_1d(const std::array<IntType, order> & multi_index, const unsigned int mode) const
-  {
-    AssertIndexRange(mode, order);
-    return is_first_index_1d(multi_index, mode) || is_last_index_1d(multi_index, mode);
-  }
-
-  std::array<IntType, order>
-  multi_index(const IntType index) const
-  {
-    return Tensors::uni_to_multiindex<order, IntType>(index, n);
-  }
-
-  IntType
-  uni_index(const std::array<IntType, order> & multi_index) const
-  {
-    return Tensors::multi_to_uniindex<order, IntType>(multi_index, n);
-  }
-
-  std::vector<IntType>
-  sliced_indices(const IntType index, const unsigned int mode) const
-  {
-    AssertThrow(order > 0, ExcMessage("Not implemented."));
-
-    std::vector<IntType> indices;
-    AssertIndexRange(mode, order);
-    AssertIndexRange(index, size(mode));
-    if(order == 1)
-    {
-      indices.emplace_back(index);
-      return indices;
-    }
-
-    const auto restrict = [&](const std::array<IntType, order> & multiindex) {
-      std::array<IntType, order - 1> slicedindex;
-      for(auto m = 0U; m < mode; ++m)
-        slicedindex[m] = multiindex[m];
-      for(auto m = mode + 1; m < order; ++m)
-        slicedindex[m - 1] = multiindex[m];
-      return slicedindex;
-    };
-    const auto prolongate = [&](const std::array<IntType, order - 1> & slicedindex) {
-      std::array<IntType, order> multiindex;
-      for(auto m = 0U; m < mode; ++m)
-        multiindex[m] = slicedindex[m];
-      multiindex[mode] = index;
-      for(auto m = mode + 1; m < order; ++m)
-        multiindex[m] = slicedindex[m - 1];
-      return multiindex;
-    };
-
-    TensorHelper<order - 1, IntType> slice(restrict(this->n));
-    for(auto i = 0U; i < slice.n_flat(); ++i)
-    {
-      const auto sliced_index = slice.multi_index(i);
-      const auto multi_index  = prolongate(sliced_index);
-      indices.emplace_back(this->uni_index(multi_index));
-    }
-    return indices;
-  }
-
-  bool
-  is_isotropic() const
-  {
-    for(auto direction = 0; direction < order; ++direction)
-      if(size(0) != size(direction))
-        return false;
-    return true;
-  }
-
-  IntType
-  n_flat() const
-  {
-    return std::accumulate(n.cbegin(),
-                           n.cend(),
-                           static_cast<IntType>(1),
-                           std::multiplies<IntType>());
-  }
-
-  IntType
-  size(const unsigned int mode) const
-  {
-    AssertIndexRange(mode, order);
-    return n[mode];
-  }
-
-  const std::array<IntType, order> &
-  size() const
-  {
-    return n;
-  }
-
-  IntType
-  collapsed_size_pre(const unsigned int direction) const
-  {
-    return std::accumulate(n.begin(), n.begin() + direction, 1, std::multiplies<IntType>{});
-  }
-
-  IntType
-  collapsed_size_post(const unsigned int direction) const
-  {
-    return std::accumulate(n.begin() + direction + 1, n.end(), 1, std::multiplies<IntType>{});
-  }
-
-  const std::array<IntType, order> n;
-};
 
 
 /**
@@ -403,6 +178,8 @@ matrix_to_table(const MatrixType & matrix)
   return table;
 }
 
+
+
 /**
  * Converts a matrix into a two dimensional table. MatrixType has to fulfill
  * following interface:
@@ -433,6 +210,8 @@ transpose_matrix_to_table(const MatrixType & matrix)
   return table;
 }
 
+
+
 /**
  * Converts a matrix into a two dimensional table. MatrixType has to fulfill
  * following interface:
@@ -460,6 +239,8 @@ lapack_matrix_to_table(const LAPACKFullMatrix<Number> & matrix)
   }
   return table;
 }
+
+
 
 /**
  * Converts the inverse of a matrix into a two dimensional table. MatrixType has
@@ -491,6 +272,12 @@ inverse_matrix_to_table(const MatrixType & matrix)
   return table;
 }
 
+
+
+/**
+ * Insert the rectangular block @p src into the matrix @p dst with lower left
+ * corner at index @p row_dst, @p col_dst.
+ */
 template<typename MatrixType1, typename MatrixType2 = MatrixType1>
 void
 insert_block(MatrixType1 &       dst,
@@ -505,105 +292,74 @@ insert_block(MatrixType1 &       dst,
       dst(row_dst + i, col_dst + j) = src(i, j);
 }
 
-/**
- * Compute the Kronecker product of two matrices. Each input
- * MatrixType must contain at least the operator(n,m) to acces the
- * elements at row n and column m.
- */
-template<typename MatrixTypeIn1, typename MatrixTypeIn2, typename MatrixTypeOut = MatrixTypeIn1>
-typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type
-kronecker_product(MatrixTypeIn1 && left_matrix, MatrixTypeIn2 && right_matrix)
+
+
+template<int order, typename Number, bool transpose1, bool transpose2>
+std::vector<std::array<Table<2, Number>, order>>
+product_impl(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
+             const std::vector<std::array<Table<2, Number>, order>> & tensors2)
 {
-  auto && matrix1 = std::forward<MatrixTypeIn1>(left_matrix);
-  auto && matrix0 = std::forward<MatrixTypeIn2>(right_matrix);
-
-  const unsigned int n_rows0 = matrix0.n_rows();
-  const unsigned int n_cols0 = matrix0.n_cols();
-  const unsigned int n_rows1 = matrix1.n_rows();
-  const unsigned int n_cols1 = matrix1.n_cols();
-  typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type matrix_out;
-  matrix_out.reinit(n_rows1 * n_rows0, n_cols1 * n_cols0);
-
-  for(unsigned int i1 = 0; i1 < n_rows1; ++i1)
-    for(unsigned int j1 = 0; j1 < n_cols1; ++j1)
-      for(unsigned int i0 = 0; i0 < n_rows0; ++i0)
-        for(unsigned int j0 = 0; j0 < n_cols0; ++j0)
-          matrix_out(i1 * n_rows0 + i0, j1 * n_cols0 + j0) = matrix1(i1, j1) * matrix0(i0, j0);
-
-  return matrix_out;
+  std::vector<std::array<Table<2, Number>, order>> prod_of_tensors(tensors1.size() *
+                                                                   tensors2.size());
+  for(auto i2 = 0U; i2 < tensors2.size(); ++i2)
+    for(auto i1 = 0U; i1 < tensors1.size(); ++i1)
+      std::transform(tensors1[i1].cbegin(),
+                     tensors1[i1].cend(),
+                     tensors2[i2].cbegin(),
+                     prod_of_tensors[i1 + tensors1.size() * i2].begin(),
+                     [](const auto & A, const auto & B) {
+                       Assert(A.n_rows() > 0, ExcMessage("Empty."));
+                       Assert(B.n_cols() > 0, ExcMessage("Empty."));
+                       auto C =
+                         LinAlg::product_impl<Number, Number, false, transpose1, transpose2>(A, B);
+                       AssertDimension(C.n_rows(), A.n_rows());
+                       AssertDimension(C.n_cols(), B.n_cols());
+                       return C;
+                     });
+  return prod_of_tensors;
 }
+
+
 
 template<int order, typename Number>
 std::vector<std::array<Table<2, Number>, order>>
 product(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
         const std::vector<std::array<Table<2, Number>, order>> & tensors2)
 {
-  std::vector<std::array<Table<2, Number>, order>> prod_of_tensors(tensors1.size() *
-                                                                   tensors2.size());
-  for(auto i2 = 0U; i2 < tensors2.size(); ++i2)
-    for(auto i1 = 0U; i1 < tensors1.size(); ++i1)
-      std::transform(tensors1[i1].cbegin(),
-                     tensors1[i1].cend(),
-                     tensors2[i2].cbegin(),
-                     prod_of_tensors[i1 + tensors1.size() * i2].begin(),
-                     [](const auto & A, const auto & B) {
-                       Assert(A.n_rows() > 0, ExcMessage("Empty."));
-                       Assert(B.n_cols() > 0, ExcMessage("Empty."));
-                       auto C = matrix_multiplication(A, B);
-                       AssertDimension(C.n_rows(), A.n_rows());
-                       AssertDimension(C.n_cols(), B.n_cols());
-                       return C;
-                     });
-  return prod_of_tensors;
+  return product_impl<order, Number, false, false>(tensors1, tensors2);
 }
+
+
 
 template<int order, typename Number>
 std::vector<std::array<Table<2, Number>, order>>
 Tproduct(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
          const std::vector<std::array<Table<2, Number>, order>> & tensors2)
 {
-  std::vector<std::array<Table<2, Number>, order>> prod_of_tensors(tensors1.size() *
-                                                                   tensors2.size());
-  for(auto i2 = 0U; i2 < tensors2.size(); ++i2)
-    for(auto i1 = 0U; i1 < tensors1.size(); ++i1)
-      std::transform(tensors1[i1].cbegin(),
-                     tensors1[i1].cend(),
-                     tensors2[i2].cbegin(),
-                     prod_of_tensors[i1 + tensors1.size() * i2].begin(),
-                     [](const auto & A, const auto & B) {
-                       Assert(A.n_rows() > 0, ExcMessage("Empty."));
-                       Assert(B.n_cols() > 0, ExcMessage("Empty."));
-                       auto C = matrix_transpose_multiplication(A, B);
-                       AssertDimension(C.n_rows(), A.n_rows());
-                       AssertDimension(C.n_cols(), B.n_cols());
-                       return C;
-                     });
-  return prod_of_tensors;
+  return product_impl<order, Number, true, false>(tensors1, tensors2);
 }
+
+
 
 template<int order, typename Number>
 std::vector<std::array<Table<2, Number>, order>>
 productT(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
          const std::vector<std::array<Table<2, Number>, order>> & tensors2)
 {
-  std::vector<std::array<Table<2, Number>, order>> prod_of_tensors(tensors1.size() *
-                                                                   tensors2.size());
-  for(auto i2 = 0U; i2 < tensors2.size(); ++i2)
-    for(auto i1 = 0U; i1 < tensors1.size(); ++i1)
-      std::transform(tensors1[i1].cbegin(),
-                     tensors1[i1].cend(),
-                     tensors2[i2].cbegin(),
-                     prod_of_tensors[i1 + tensors1.size() * i2].begin(),
-                     [](const auto & A, const auto & B) {
-                       Assert(A.n_rows() > 0, ExcMessage("Empty."));
-                       Assert(B.n_cols() > 0, ExcMessage("Empty."));
-                       auto C = matrix_multiplication_transpose(A, B);
-                       AssertDimension(C.n_rows(), A.n_rows());
-                       AssertDimension(C.n_cols(), B.n_cols());
-                       return C;
-                     });
-  return prod_of_tensors;
+  return product_impl<order, Number, false, true>(tensors1, tensors2);
 }
+
+
+
+template<int order, typename Number>
+void
+scaling(const Number & factor, std::array<Table<2, Number>, order> & tensor)
+{
+  static_assert(order > 0, "order isn't positive");
+  tensor.front() = std::move(LinAlg::scaling(factor, tensor.front()));
+}
+
+
 
 template<int order, typename Number>
 std::vector<std::array<Table<2, Number>, order>>
@@ -621,22 +377,7 @@ scale(const Number & factor, const std::vector<std::array<Table<2, Number>, orde
   return scaled_tensors;
 }
 
-template<typename Number>
-bool
-is_nearly_zero_value(const Number & value)
-{
-  using scalar_value_type = typename ExtractScalarType<Number>::type;
-  static constexpr scalar_value_type threshold =
-    std::numeric_limits<scalar_value_type>::epsilon() * 100.;
 
-  bool is_nearly_zero = true;
-  for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
-  {
-    const double scalar = scalar_value(value, lane);
-    is_nearly_zero &= std::abs(scalar) < threshold;
-  }
-  return is_nearly_zero;
-}
 
 template<typename Number>
 bool
@@ -646,8 +387,10 @@ is_nearly_zero(const Table<2, Number> & matrix)
   const auto           n     = matrix.size(1);
   const Number * const begin = &(matrix(0, 0));
   const Number * const end   = std::next(&(matrix(m - 1, n - 1)));
-  return std::all_of(begin, end, is_nearly_zero_value<Number>);
+  return std::all_of(begin, end, has_nearly_zero_abs<Number>);
 }
+
+
 
 template<int N, typename Number>
 bool
@@ -657,104 +400,16 @@ is_nearly_zero(const std::array<Table<2, Number>, N> & array)
 }
 
 
-/**
- * Computes the sum of two equally sized matrices. Each input
- * MatrixType must contain at least the operator(n,m) to acces the
- * elements at row n and column m.
- */
-template<typename MatrixTypeIn1, typename MatrixTypeIn2, typename MatrixTypeOut = MatrixTypeIn1>
-typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type
-sum(MatrixTypeIn1 && left_matrix, MatrixTypeIn2 && right_matrix)
-{
-  using namespace dealii;
-  auto && matrix1 = std::forward<MatrixTypeIn1>(left_matrix);
-  auto && matrix0 = std::forward<MatrixTypeIn2>(right_matrix);
-
-  const unsigned int n_rows0 = matrix0.n_rows();
-  const unsigned int n_cols0 = matrix0.n_cols();
-#ifdef DEBUG
-  const unsigned int n_rows1 = matrix1.n_rows();
-  const unsigned int n_cols1 = matrix1.n_cols();
-  AssertDimension(n_rows0, n_rows1);
-  AssertDimension(n_cols0, n_cols1);
-#endif
-
-  typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type matrix_out;
-  matrix_out.reinit(n_rows0, n_cols0);
-
-  for(unsigned int i = 0; i < n_rows0; ++i)
-    for(unsigned int j = 0; j < n_cols0; ++j)
-      matrix_out(i, j) = matrix1(i, j) + matrix0(i, j);
-
-  return matrix_out;
-}
-
-/**
- * Returns the transpose of the input matrix @p matrix_in
- * MatrixType must contain at least the operator(n,m) to acces the
- * elements at row n and column m.
- */
-template<typename MatrixTypeIn1, typename MatrixTypeOut = MatrixTypeIn1>
-typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type
-// scale(MatrixTypeIn1 && matrix_in,const typename ExtractScalarType<typename
-// MatrixTypeIn1::value_type>::type factor)
-scale(const double factor, MatrixTypeIn1 && matrix_in) // TODO
-{
-  auto && matrix0 = std::forward<MatrixTypeIn1>(matrix_in);
-
-  const unsigned int n_rows0 = matrix0.n_rows();
-  const unsigned int n_cols0 = matrix0.n_cols();
-
-  typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type matrix_out;
-  matrix_out.reinit(n_rows0, n_cols0);
-
-  for(unsigned int i = 0; i < n_rows0; ++i)
-    for(unsigned int j = 0; j < n_cols0; ++j)
-      matrix_out(i, j) = factor * matrix0(i, j);
-
-  return matrix_out;
-}
-
-/**
- * Returns the transpose of the input matrix @p matrix_in
- * MatrixType must contain at least the operator(n,m) to acces the
- * elements at row n and column m.
- */
-template<typename MatrixTypeIn1, typename MatrixTypeOut = MatrixTypeIn1>
-typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type
-transpose(MatrixTypeIn1 && matrix_in)
-{
-  auto && matrix_src = std::forward<MatrixTypeIn1>(matrix_in);
-
-  const unsigned int n_rows_src = matrix_src.n_rows();
-  const unsigned int n_cols_src = matrix_src.n_cols();
-
-  typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type matrix_out;
-  matrix_out.reinit(n_cols_src, n_rows_src);
-
-  for(unsigned int i = 0; i < n_rows_src; ++i)
-    for(unsigned int j = 0; j < n_cols_src; ++j)
-      matrix_out(j, i) = matrix_src(i, j);
-
-  return matrix_out;
-}
 
 template<int order, typename Number>
-// std::array<Table<2, VectorizedArray<Number>>, order>
 void
 transpose_tensor(std::array<Table<2, VectorizedArray<Number>>, order> & tensor)
 {
   for(auto & matrix : tensor)
-    matrix = transpose(matrix);
+    matrix = LinAlg::transpose(matrix);
 }
 
-// template<int order, typename Number>
-// std::vector<std::array<Table<2, Number>, order>> elementary_tensors;
-// assemble_elementary_tensors(const Table<2, Number> * mass, const Table<2, Number> * driv)
-// {
-//   std::vector<std::array<Table<2, Number>, order>> elementary_tensors(order);
 
-// }
 
 /**
  * Assembles the separable Kronecker product form of a collection of

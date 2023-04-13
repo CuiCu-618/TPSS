@@ -20,6 +20,281 @@ using namespace dealii;
 
 
 
+namespace Common
+{
+/**
+ * This struct defines the parameters used in PolyAtCube.
+ */
+template<int dim>
+struct PolyAtCubeBase
+{
+  static const std::vector<double> polynomial_coefficients;
+};
+
+template<>
+const std::vector<double> PolyAtCubeBase<2>::polynomial_coefficients = {{0., 0., 1., -2., 1.}};
+
+template<>
+const std::vector<double> PolyAtCubeBase<3>::polynomial_coefficients = {{0., 0., 1., -2., 1.}};
+
+
+
+/**
+ * Given the univariate polynomial (@p poly)
+ *
+ *    p(x) = (x-1)^2 * x^2
+ *
+ * this class represents the polynomial
+ *
+ *    PHI(x,y) = p(x) * p(y)
+ *
+ * in two dimensions and the polynomial
+ *
+ *    PHI(x,y) = p(x) * p(y) * p(z)
+ *
+ * in three dimensions. The roots of p(x) are chosen such that the value as well
+ * as the gradient of PHI(x,y) are zero at the boundary of the unit cube
+ * [0,1]^2.
+ */
+template<int dim>
+class PolyAtCube : public Function<dim>, protected PolyAtCubeBase<dim>
+{
+public:
+  PolyAtCube() : Function<dim>(1), poly(PolyAtCubeBase<dim>::polynomial_coefficients)
+  {
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int /*component*/ = 0) const override;
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int /*component*/ = 0) const override;
+
+  virtual SymmetricTensor<2, dim>
+  hessian(const Point<dim> & p, const unsigned int /*component*/ = 0) const override;
+
+  virtual double
+  laplacian(const dealii::Point<dim> & p, const unsigned int /*component*/ = 0) const override final
+  {
+    const double lapl = trace(hessian(p));
+    return lapl;
+  }
+
+  double
+  bilaplacian(const Point<dim> & p, const unsigned int /*component*/ = 0) const;
+
+private:
+  Polynomials::Polynomial<double> poly;
+};
+
+
+template<>
+double
+PolyAtCube<2>::value(const Point<2> & p, const unsigned int /*component*/) const
+{
+  const auto x = p[0];
+  const auto y = p[1];
+
+  std::vector<double> values_x(1U), values_y(1U);
+  poly.value(x, values_x);
+  poly.value(y, values_y);
+  const auto poly_x = values_x[0];
+  const auto poly_y = values_y[0];
+
+  return poly_x * poly_y;
+}
+
+
+template<>
+double
+PolyAtCube<3>::value(const Point<3> & p, const unsigned int /*component*/) const
+{
+  const auto x = p[0];
+  const auto y = p[1];
+  const auto z = p[2];
+
+  std::vector<double> values_x(1U), values_y(1U), values_z(1U);
+  poly.value(x, values_x);
+  poly.value(y, values_y);
+  poly.value(z, values_z);
+  const auto poly_x = values_x[0];
+  const auto poly_y = values_y[0];
+  const auto poly_z = values_z[0];
+
+  return poly_x * poly_y * poly_z;
+}
+
+
+template<>
+Tensor<1, 2>
+PolyAtCube<2>::gradient(const Point<2> & p, const unsigned int /*component*/) const
+{
+  const auto x = p[0];
+  const auto y = p[1];
+
+  std::vector<double> values_x(2U), values_y(2U);
+  poly.value(x, values_x);
+  poly.value(y, values_y);
+  const auto poly_x  = values_x[0]; // p(x)
+  const auto Dpoly_x = values_x[1]; // p'(x)
+  const auto poly_y  = values_y[0]; // p(y)
+  const auto Dpoly_y = values_y[1]; // p'(y)
+
+  Tensor<1, 2> grad;
+  grad[0] = Dpoly_x * poly_y;
+  grad[1] = poly_x * Dpoly_y;
+
+  return grad;
+}
+
+
+template<>
+Tensor<1, 3>
+PolyAtCube<3>::gradient(const Point<3> & p, const unsigned int /*component*/) const
+{
+  const auto x = p[0];
+  const auto y = p[1];
+  const auto z = p[2];
+
+  std::vector<double> values_x(2U), values_y(2U), values_z(2U);
+  poly.value(x, values_x);
+  poly.value(y, values_y);
+  poly.value(z, values_z);
+  const auto poly_x  = values_x[0]; // p(x)
+  const auto Dpoly_x = values_x[1]; // p'(x)
+  const auto poly_y  = values_y[0]; // p(y)
+  const auto Dpoly_y = values_y[1]; // p'(y)
+  const auto poly_z  = values_z[0]; // p(z)
+  const auto Dpoly_z = values_z[1]; // p'(z)
+
+  Tensor<1, 3> grad;
+  grad[0] = Dpoly_x * poly_y * poly_z;
+  grad[1] = poly_x * Dpoly_y * poly_z;
+  grad[2] = poly_x * poly_y * Dpoly_z;
+
+  return grad;
+}
+
+
+template<>
+SymmetricTensor<2, 2>
+PolyAtCube<2>::hessian(const Point<2> & p, const unsigned int /*component*/) const
+{
+  const auto x = p[0];
+  const auto y = p[1];
+
+  std::vector<double> values_x(3U), values_y(3U);
+  poly.value(x, values_x);
+  poly.value(y, values_y);
+  const auto poly_x   = values_x[0];
+  const auto Dpoly_x  = values_x[1];
+  const auto D2poly_x = values_x[2];
+  const auto poly_y   = values_y[0];
+  const auto Dpoly_y  = values_y[1];
+  const auto D2poly_y = values_y[2];
+
+  SymmetricTensor<2, 2> hess;
+  hess[0][0] = D2poly_x * poly_y;
+  hess[0][1] = Dpoly_x * Dpoly_y;
+  hess[1][1] = poly_x * D2poly_y;
+
+  return hess;
+}
+
+
+template<>
+SymmetricTensor<2, 3>
+PolyAtCube<3>::hessian(const Point<3> & p, const unsigned int /*component*/) const
+{
+  const auto x = p[0];
+  const auto y = p[1];
+  const auto z = p[2];
+
+  std::vector<double> values_x(3U), values_y(3U), values_z(3U);
+  poly.value(x, values_x);
+  poly.value(y, values_y);
+  poly.value(z, values_z);
+  const auto poly_x   = values_x[0];
+  const auto Dpoly_x  = values_x[1];
+  const auto D2poly_x = values_x[2];
+  const auto poly_y   = values_y[0];
+  const auto Dpoly_y  = values_y[1];
+  const auto D2poly_y = values_y[2];
+  const auto poly_z   = values_z[0];
+  const auto Dpoly_z  = values_z[1];
+  const auto D2poly_z = values_z[2];
+
+  SymmetricTensor<2, 3> hess;
+  hess[0][0] = D2poly_x * poly_y * poly_z;
+  hess[0][1] = Dpoly_x * Dpoly_y * poly_z;
+  hess[0][2] = Dpoly_x * poly_y * Dpoly_z;
+  hess[1][1] = poly_x * D2poly_y * poly_z;
+  hess[1][2] = poly_x * Dpoly_y * Dpoly_z;
+  hess[2][2] = poly_x * poly_y * D2poly_z;
+
+  return hess;
+}
+
+
+template<>
+double
+PolyAtCube<2>::bilaplacian(const Point<2> & p, const unsigned int /*component*/) const
+{
+  const auto & x = p[0];
+  const auto & y = p[1];
+
+  std::vector<double> values_x(5U), values_y(5U);
+  poly.value(x, values_x);
+  poly.value(y, values_y);
+  const auto poly_x   = values_x[0];
+  const auto D2poly_x = values_x[2];
+  const auto D4poly_x = values_x[4];
+  const auto poly_y   = values_y[0];
+  const auto D2poly_y = values_y[2];
+  const auto D4poly_y = values_y[4];
+
+  double bilapl = 0.;
+  bilapl        = D4poly_x * poly_y + 2. * D2poly_x * D2poly_y + poly_x * D4poly_y;
+
+  return bilapl;
+}
+
+
+template<>
+double
+PolyAtCube<3>::bilaplacian(const Point<3> & p, const unsigned int /*component*/) const
+{
+  const auto & x = p[0];
+  const auto & y = p[1];
+  const auto & z = p[2];
+
+  std::vector<double> values_x(5U), values_y(5U), values_z(5U);
+  poly.value(x, values_x);
+  poly.value(y, values_y);
+  poly.value(z, values_z);
+  const auto poly_x   = values_x[0];
+  const auto D2poly_x = values_x[2];
+  const auto D4poly_x = values_x[4];
+  const auto poly_y   = values_y[0];
+  const auto D2poly_y = values_y[2];
+  const auto D4poly_y = values_y[4];
+  const auto poly_z   = values_z[0];
+  const auto D2poly_z = values_z[2];
+  const auto D4poly_z = values_z[4];
+
+  double bilapl = 0.;
+  bilapl        = D4poly_x * poly_y * poly_z;
+  bilapl += 2. * D2poly_x * D2poly_y * poly_z;
+  bilapl += 2. * D2poly_x * poly_y * D2poly_z;
+  bilapl += poly_x * D4poly_y * poly_z;
+  bilapl += 2. * poly_x * D2poly_y * D2poly_z;
+  bilapl += poly_x * poly_y * D4poly_z;
+
+  return bilapl;
+}
+
+} // namespace Common
+
 /**
  *
  * PDE data and reference solutions:
@@ -34,12 +309,106 @@ namespace Laplace
 {
 struct EquationData
 {
+  enum class Variant
+  {
+    DirichletHom,     // 0
+    DirichletBell,    // 1
+    DirichletHomPoly, // 2
+  };
+  static constexpr unsigned int n_variants = 3;
+
+  static std::string
+  str_equation_variant(const Variant variant);
+
+  std::string
+  str_equation_variant() const;
+
+  static std::string
+  sstr_equation_variant(const Variant variant);
+
+  std::string
+  sstr_equation_variant() const;
+
+  std::string
+  to_string() const;
+
+  Variant                      variant                = Variant::DirichletBell;
   std::set<types::boundary_id> dirichlet_boundary_ids = {0};
   std::set<types::boundary_id> neumann_boundary_ids   = {};
   double                       ip_factor              = 1.;
 };
 
 
+std::string
+EquationData::str_equation_variant(const Variant variant)
+{
+  std::string str[n_variants] = {"Dirichlet (homogeneous)",
+                                 "Dirichlet (Gaussian bells)",
+                                 "Dirichlet (polynomial, homogeneous)"};
+
+  return str[static_cast<int>(variant)];
+}
+
+
+std::string
+EquationData::str_equation_variant() const
+{
+  return str_equation_variant(variant);
+}
+
+
+std::string
+EquationData::sstr_equation_variant(const Variant variant)
+{
+  std::string str[n_variants] = {"hom", "bell", "hompoly"};
+  return str[static_cast<int>(variant)];
+}
+
+
+std::string
+EquationData::sstr_equation_variant() const
+{
+  return sstr_equation_variant(variant);
+}
+
+
+std::string
+EquationData::to_string() const
+{
+  std::ostringstream oss;
+  oss << Util::parameter_to_fstring("Equation Data:", str_equation_variant(variant));
+  oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
+  oss << Util::parameter_to_fstring("Dirichlet boundary ids:",
+                                    set_to_string(dirichlet_boundary_ids));
+  oss << Util::parameter_to_fstring("Neumann boundary ids:", set_to_string(neumann_boundary_ids));
+  return oss.str();
+}
+
+
+
+template<int dim>
+class ManufacturedLoad : public Function<dim>
+{
+public:
+  ManufacturedLoad(const std::shared_ptr<const Function<dim>> solution_function_in)
+    : Function<dim>(), solution_function(solution_function_in)
+  {
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int = 0) const override final
+  {
+    return -solution_function->laplacian(p);
+  }
+
+private:
+  std::shared_ptr<const Function<dim>> solution_function;
+};
+
+
+
+namespace GaussianBells
+{
 template<int dim>
 class SolutionBase
 {
@@ -211,21 +580,38 @@ public:
 private:
   Solution<dim> solution_function;
 };
+} // namespace GaussianBells
 
 
 
-struct ZeroDirichletUnitCubeData
+namespace Homogeneous
+{
+struct SolutionBase
 {
   static constexpr double a = 1.;
 };
 
+
+
+/**
+ * This struct implements the reference solution
+ *
+ *   PHI(x,y) = sin(pi * x^2) (exp(y*(y-1)^2) - 1)
+ *
+ * in two dimensions and
+ *
+ *   PHI(x,y,z) = TODO
+ *
+ * in three dimensions. PHI is designed to have fulfill zero-Dirichlet
+ * conditions at the boundary of the unit hypercube [0,1]^dim.
+ */
 template<int dim>
-class ZeroDirichletUnitCube : public Function<dim>, private ZeroDirichletUnitCubeData
+class Solution : public Function<dim>, private SolutionBase
 {
 };
 
 template<>
-class ZeroDirichletUnitCube<2> : public Function<2>, private ZeroDirichletUnitCubeData
+class Solution<2> : public Function<2>, private SolutionBase
 {
 private:
   static constexpr int dim = 2;
@@ -263,12 +649,12 @@ public:
 };
 
 template<>
-class ZeroDirichletUnitCube<3> : public Function<3>, private ZeroDirichletUnitCubeData
+class Solution<3> : public Function<3>, private SolutionBase
 {
 private:
   static constexpr int dim = 3;
   using value_type         = Point<dim>::value_type;
-  const ZeroDirichletUnitCube<2> func_2d;
+  const Solution<2> func_2d;
 
 public:
   virtual value_type
@@ -304,29 +690,19 @@ public:
   }
 };
 
-
-
-template<int dim>
-class ManufacturedLoad : public Function<dim>
+namespace Poly
 {
-public:
-  ManufacturedLoad(const std::shared_ptr<const Function<dim>> solution_function_in)
-    : Function<dim>(), solution_function(solution_function_in)
-  {
-  }
+template<int dim>
+using Solution = ::Common::PolyAtCube<dim>;
+}
 
-  virtual double
-  value(const Point<dim> & p, const unsigned int = 0) const override final
-  {
-    return -solution_function->laplacian(p);
-  }
-
-private:
-  std::shared_ptr<const Function<dim>> solution_function;
-};
+} // namespace Homogeneous
 
 
 
+/**
+ * Helper struct defines a load function returning random values.
+ */
 template<int dim>
 class RandomLoad : public Function<dim>
 {
@@ -337,6 +713,7 @@ public:
     return make_random_value<double>();
   }
 };
+
 } // end namespace Laplace
 
 
@@ -524,7 +901,8 @@ namespace Biharmonic
 enum LocalSolverVariant
 {
   Exact,
-  Bilaplacian
+  Bilaplacian,
+  KSVD
 };
 
 
@@ -538,9 +916,10 @@ struct EquationData
     ClampedStreamNoSlip,           // 2
     ClampedStreamPoiseuilleNoSlip, // 3
     ClampedStreamNoSlipNormal,     // 4
-    ClampedStreamPoiseuilleInhom   // 5
+    ClampedStreamPoiseuilleInhom,  // 5
+    ClampedHomPoly                 // 6
   };
-  static constexpr unsigned int n_variants = 6;
+  static constexpr unsigned int n_variants = 7;
 
   static std::string
   str_equation_variant(const Variant variant);
@@ -558,15 +937,22 @@ struct EquationData
   str_local_solver() const;
 
   std::string
+  sstr_local_solver() const;
+
+  std::string
   to_string() const;
 
   bool
   is_stream_function() const;
 
-  Variant                      variant                = Variant::ClampedHom;
-  std::set<types::boundary_id> dirichlet_boundary_ids = {0};
-  double                       ip_factor              = 1.;
-  LocalSolverVariant           local_solver_variant   = LocalSolverVariant::Exact;
+  Variant                      variant                         = Variant::ClampedHom;
+  std::set<types::boundary_id> dirichlet_boundary_ids          = {0};
+  double                       ip_factor                       = 1.;
+  LocalSolverVariant           local_solver_variant            = LocalSolverVariant::Exact;
+  std::set<unsigned int>       ksvd_tensor_indices             = {0U};
+  bool                         force_positive_definite_inverse = false;
+  double                       addition_to_min_eigenvalue      = 0.01;
+  std::size_t                  n_lanczos_iterations            = static_cast<std::size_t>(-1);
 };
 
 
@@ -578,7 +964,8 @@ EquationData::str_equation_variant(const Variant variant)
                                  "clamped (stream function - no-slip)",
                                  "clamped (stream function - no-slip Poiseuille)",
                                  "clamped (stream function - no-slip-normal)",
-                                 "clamped (stream function - inhom. Poiseuille)"};
+                                 "clamped (stream function - inhom. Poiseuille)",
+                                 "clamped (polynomial, homogeneous)"};
   return str[static_cast<int>(variant)];
 }
 
@@ -586,12 +973,13 @@ EquationData::str_equation_variant(const Variant variant)
 std::string
 EquationData::sstr_equation_variant(const Variant variant)
 {
-  std::string str[] = {"clamped_hom",
-                       "clamped_bell",
-                       "clamped_noslip",
-                       "clamped_noslip_poiseuille",
-                       "clamped_noslipnormal",
-                       "clamped_inhom_poiseuille"};
+  std::string str[n_variants] = {"clamped_hom",
+                                 "clamped_bell",
+                                 "clamped_noslip",
+                                 "clamped_noslip_poiseuille",
+                                 "clamped_noslipnormal",
+                                 "clamped_inhom_poiseuille",
+                                 "clamped_hompoly"};
   return str[static_cast<int>(variant)];
 }
 
@@ -606,7 +994,9 @@ EquationData::sstr_equation_variant() const
 std::string
 EquationData::str_local_solver(const LocalSolverVariant variant)
 {
-  const std::string str_variant[] = {"Exact", "Bilaplacian (no mixed derivatives)"};
+  const std::string str_variant[] = {"Exact",
+                                     "Bilaplacian (no mixed derivatives)",
+                                     "Kronecker SVD"};
   return str_variant[(int)variant];
 }
 
@@ -619,12 +1009,30 @@ EquationData::str_local_solver() const
 
 
 std::string
+EquationData::sstr_local_solver() const
+{
+  const std::string str_variant[] = {"exact", "bilapl", "ksvd"};
+  return str_variant[(int)local_solver_variant];
+}
+
+
+std::string
 EquationData::to_string() const
 {
   std::ostringstream oss;
   oss << Util::parameter_to_fstring("Equation Data:", str_equation_variant(variant));
   oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
   oss << Util::parameter_to_fstring("Local solver:", str_local_solver(local_solver_variant));
+  if(local_solver_variant == LocalSolverVariant::KSVD)
+  {
+    oss << Util::parameter_to_fstring("Selected KSVD tensors:", set_to_string(ksvd_tensor_indices));
+    oss << Util::parameter_to_fstring("Number of Lanczos iterations:", n_lanczos_iterations);
+    if(force_positive_definite_inverse)
+      oss << Util::parameter_to_fstring("Force positive definite inverses:",
+                                        force_positive_definite_inverse);
+    if(ksvd_tensor_indices.size() == 2U)
+      oss << Util::parameter_to_fstring("Addition to min. eigenvalue:", addition_to_min_eigenvalue);
+  }
   oss << Util::parameter_to_fstring("Stream function formulation (Stokes):", is_stream_function());
   return oss.str();
 }
@@ -712,6 +1120,20 @@ public:
 
 template<int dim>
 using Load = ManufacturedLoad<dim, Solution<dim>>;
+
+
+
+namespace Poly
+{
+template<int dim>
+using Solution = ::Common::PolyAtCube<dim>;
+
+
+
+template<int dim>
+using Load = ManufacturedLoad<dim, Solution<dim>>;
+} // namespace Poly
+
 } // namespace Homogeneous
 
 
@@ -719,7 +1141,7 @@ using Load = ManufacturedLoad<dim, Solution<dim>>;
 namespace GaussianBells
 {
 template<int dim>
-using Solution = Laplace::Solution<dim>;
+using Solution = Laplace::GaussianBells::Solution<dim>;
 
 
 
@@ -1112,6 +1534,7 @@ public:
     : Function<dim>(range.second - range.first), function(function_in), shift(range.first)
   {
     Assert(range.first <= range.second, ExcMessage("Invalid range."));
+    Assert(function_in, ExcMessage("function_in is null"));
     AssertIndexRange(range.first, function_in->n_components);
     AssertIndexRange(range.second, function_in->n_components + 1);
   }
@@ -1746,7 +2169,7 @@ using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>
 namespace GaussianBell
 {
 template<int dim>
-using SolutionBaseVelocity = Laplace::SolutionBase<dim>;
+using SolutionBaseVelocity = Laplace::GaussianBells::SolutionBase<dim>;
 
 
 
@@ -2352,6 +2775,7 @@ class Load : public Function<dim>, protected Biharmonic::Clamped::NoSlip::Soluti
   using Biharmonic::Clamped::NoSlip::SolutionBase<dim>::polynomial_coefficients;
 
 public:
+  // TODO init @p poly by the coefficients @p polynomial_coefficients
   Load() : Function<dim>(dim + 1), poly(std::vector<double>{{0., 0., 1., -2., 1.}})
   {
   }

@@ -8,12 +8,14 @@
 
 #include <deal.II/base/convergence_table.h>
 
-#include "app_utilities.h"
 #include "ct_parameter.h"
 #include "poisson_problem.h"
+#include "utilities.h"
 
 using namespace dealii;
 using namespace Laplace;
+
+
 
 struct TestParameter
 {
@@ -21,15 +23,16 @@ struct TestParameter
   TPSS::SmootherVariant              smoother_variant = CT::SMOOTHER_VARIANT_;
   std::string                        solver_variant   = "gmres"; //!!! see SolverSelector
   CoarseGridParameter::SolverVariant coarse_grid_variant =
-    CoarseGridParameter::SolverVariant::IterativeAcc;
+    CoarseGridParameter::SolverVariant::Iterative;
   double       coarse_grid_accuracy    = 1.e-12;
-  double       cg_reduction            = 1.e-8;
+  double       cg_reduction            = 1.e-8; // -8 !!!
   unsigned     n_refinements           = 1;
   unsigned     n_repetitions           = 2;
   double       damping                 = 0.;
   bool         use_ras_weights         = false;
   bool         use_ras_boolean_weights = false;
   unsigned int n_smoothing_steps       = 1;
+  EquationData equation_data;
 
   std::string
   to_string() const
@@ -85,7 +88,7 @@ struct Tester
   {
     //: discretization
     rt_parameters.n_cycles              = 15;
-    rt_parameters.dof_limits            = {1e1, 2e6}; // {1e5, 1e8};
+    rt_parameters.dof_limits            = {1e1, 5e5}; // {1e5, 1e8};
     rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
     rt_parameters.mesh.n_refinements    = testprms.n_refinements;
     rt_parameters.mesh.n_repetitions    = testprms.n_repetitions;
@@ -94,6 +97,7 @@ struct Tester
     //: solver
     rt_parameters.solver.variant              = testprms.solver_variant;
     rt_parameters.solver.rel_tolerance        = testprms.cg_reduction;
+    rt_parameters.solver.abs_tolerance        = 1.e-16;
     rt_parameters.solver.precondition_variant = SolverParameter::PreconditionVariant::GMG;
     rt_parameters.solver.n_iterations_max     = 100;
 
@@ -167,7 +171,7 @@ struct Tester
   void
   run()
   {
-    poisson_problem = std::make_shared<PoissonProblem>(rt_parameters);
+    poisson_problem = std::make_shared<PoissonProblem>(rt_parameters, testprms.equation_data);
 
     //: write headers to logfile
     *pcout << Util::generic_info_to_fstring() << std::endl;
@@ -226,18 +230,24 @@ main(int argc, char * argv[])
 
   //: default
   TestParameter testprms;
-  unsigned int  solver_index            = 0;
+  unsigned int  solver_index            = 0; // CG + GMG + Schwarz
   unsigned int  use_ras_weights         = 0;
   unsigned int  use_ras_boolean_weights = 0;
   int           n_threads_max           = 1;
+  unsigned int  pde_index               = 1; // Gaussian Bells
+  unsigned int  debug_depth             = 0;
 
   //: parse runtime arguments
   atoi_if(solver_index, 1);
-  atoi_if(use_ras_weights, 2);
-  atoi_if(use_ras_boolean_weights, 3);
-  atoi_if(n_threads_max, 4);
-  atoi_if(testprms.n_smoothing_steps, 5);
-  atof_if(testprms.damping, 6);
+  atoi_if(pde_index, 2);
+  atoi_if(use_ras_weights, 3);
+  atoi_if(use_ras_boolean_weights, 4);
+  atoi_if(n_threads_max, 5);
+  atoi_if(testprms.n_smoothing_steps, 6);
+  atof_if(testprms.damping, 7);
+  atoi_if(debug_depth, 8);
+
+  deallog.depth_console(debug_depth);
 
   Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
                                                       argv,
@@ -246,12 +256,14 @@ main(int argc, char * argv[])
                                                         static_cast<unsigned int>(n_threads_max));
 
   AssertThrow(solver_index <= solver_index_max, ExcMessage("Invalid solver index."));
+  AssertThrow(pde_index <= EquationData::n_variants, ExcMessage("Invalid PDE index."));
   AssertThrow(use_ras_weights <= 1U, ExcMessage("Invalid integer value for use_ras_weights."));
   AssertThrow(use_ras_boolean_weights <= 1U,
               ExcMessage("Invalid integer value for use_ras_boolean_weights."));
   AssertThrow(testprms.damping <= 1., ExcMessage("No over-relaxation allowed."));
 
   testprms.solver_variant          = solver_variant[solver_index];
+  testprms.equation_data.variant   = static_cast<EquationData::Variant>(pde_index);
   testprms.use_ras_weights         = static_cast<bool>(use_ras_weights);
   testprms.use_ras_boolean_weights = static_cast<bool>(use_ras_boolean_weights);
 

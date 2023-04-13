@@ -5,10 +5,10 @@
  *      Author: witte
  */
 
-#include "app_utilities.h"
 #include "biharmonic_problem.h"
 #include "ct_parameter.h"
 #include "stokes.h"
+#include "utilities.h"
 
 
 
@@ -27,13 +27,13 @@ main(int argc, char * argv[])
     // };
 
     //: default
-    unsigned int test_index        = 0;
-    unsigned int debug_depth       = 3;
-    double       damping           = 0.;
-    unsigned int pde_index         = 3;
-    unsigned int test_index_stokes = 0;
-    unsigned int pde_index_stokes  = 3;
-    unsigned int n_cycles          = 1;
+    unsigned int test_index  = 0;
+    unsigned int debug_depth = 3;
+    double       damping     = 0.;
+    unsigned int pde_index   = 3;
+    // unsigned int test_index_stokes = 0;
+    // unsigned int pde_index_stokes  = 3;
+    unsigned int n_cycles = 1;
 
     //: parse arguments
     atoi_if(test_index, 1);
@@ -46,11 +46,11 @@ main(int argc, char * argv[])
     deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
 
-    constexpr int  dim                = CT::DIMENSION_;
-    constexpr int  fe_degree_stream   = CT::FE_DEGREE_;
-    constexpr int  fe_degree_pressure = fe_degree_stream - 1;
-    constexpr auto patch_variant      = CT::PATCH_VARIANT_;
-    constexpr auto smoother_variant   = CT::SMOOTHER_VARIANT_;
+    constexpr int dim              = CT::DIMENSION_;
+    constexpr int fe_degree_stream = CT::FE_DEGREE_;
+    // constexpr int  fe_degree_pressure = fe_degree_stream - 1;
+    constexpr auto patch_variant    = CT::PATCH_VARIANT_;
+    constexpr auto smoother_variant = CT::SMOOTHER_VARIANT_;
 
     // 0: direct solver
     // 1: CG solver (no preconditioner)
@@ -80,7 +80,7 @@ main(int argc, char * argv[])
       if(damping == 0.)
         damping = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
       prms.multigrid.coarse_level                 = 0;
-      prms.multigrid.coarse_grid.solver_variant   = CoarseGridParameter::SolverVariant::FullSVD;
+      prms.multigrid.coarse_grid.solver_variant   = CoarseGridParameter::SolverVariant::DirectSVD;
       prms.multigrid.coarse_grid.iterative_solver = "cg";
       prms.multigrid.coarse_grid.accuracy         = 1.e-12;
       const SmootherParameter::SmootherVariant smoother_variant[test_index_max + 1] = {
@@ -206,9 +206,9 @@ main(int argc, char * argv[])
     unit_dofh_v.initialize(unit_triangulation, fe_v);
     unit_dofh_p.initialize(unit_triangulation, fe_p);
 
-    const auto n_q_points_1d     = stokes_problem.n_q_points_1d;
+    // const auto n_q_points_1d     = stokes_problem.n_q_points_1d;
     const auto n_dofs_per_cell_v = fe_v.dofs_per_cell;
-    const auto n_dofs_per_cell_p = fe_p.dofs_per_cell;
+    // const auto n_dofs_per_cell_p = fe_p.dofs_per_cell;
 
     /// Display RT shape functions in ParaView.
     {
@@ -241,7 +241,7 @@ main(int argc, char * argv[])
       const auto &                support_points = fe_v.get_generalized_support_points();
       std::vector<Vector<double>> support_values(support_points.size(), Vector<double>(dim));
 
-      const auto & fe_sf = biharmonic_problem.fe; // stream functions
+      const auto & fe_sf = *biharmonic_problem.finite_element; // stream functions
 
       const auto compute_curl_phi_j = [&](const unsigned int j, const auto & x_q) {
         AssertThrow(dim == 2, ExcMessage("Only valid in 2D."));

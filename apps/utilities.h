@@ -14,10 +14,22 @@
 #include <deal.II/base/revision.h>
 #include <deal.II/base/utilities.h>
 
+#include <deal.II/lac/full_matrix.h>
+#include <deal.II/lac/la_parallel_vector.h>
+
+
 #include "git_version.h"
 #include "solvers_and_preconditioners/TPSS/generic_functionalities.h"
+#include "solvers_and_preconditioners/TPSS/tensors.h"
 
+
+#include <algorithm>
+#include <cstring>
 #include <iostream>
+#include <string>
+#include <vector>
+
+
 
 using namespace dealii;
 
@@ -33,6 +45,8 @@ parameter_to_fstring(const std::string & description, const T parameter)
   return oss.str();
 }
 
+
+
 std::string
 git_version_to_fstring()
 {
@@ -43,6 +57,8 @@ git_version_to_fstring()
   oss << parameter_to_fstring("Git - TPSS branch: ", GIT_BRANCH);
   return oss.str();
 }
+
+
 
 std::string
 generic_info_to_fstring()
@@ -61,6 +77,60 @@ generic_info_to_fstring()
                                     8 * size_of_global_dof_index);
   return oss.str();
 }
+
+
+
+static constexpr char const * skipper = "o";
+
+std::vector<char const *>
+args_to_strings(const int argc_in, char * argv_in[])
+{
+  std::vector<char const *> tmp;
+  std::copy_n(argv_in, argc_in, std::back_inserter(tmp));
+  return tmp;
+}
+
+struct ConditionalAtoi
+{
+  ConditionalAtoi(const int argc_in, char * argv_in[]) : argv(args_to_strings(argc_in, argv_in))
+  {
+  }
+
+  template<typename T>
+  void
+  operator()(T & prm, const std::size_t index)
+  {
+    if(argv.size() <= index)
+      return;
+    if(std::strcmp(argv[index], skipper) == 0)
+      return;
+    prm = std::atoi(argv[index]);
+  }
+
+  std::vector<char const *> argv;
+};
+
+struct ConditionalAtof
+{
+  ConditionalAtof(const int argc_in, char * argv_in[]) : argv(args_to_strings(argc_in, argv_in))
+  {
+  }
+
+  template<typename T>
+  void
+  operator()(T & prm, const std::size_t index)
+  {
+    if(argv.size() <= index)
+      return;
+    if(std::strcmp(argv[index], skipper) == 0)
+      return;
+    prm = std::atof(argv[index]);
+  }
+
+  std::vector<char const *> argv;
+};
+
+
 
 constexpr unsigned long long
 pow(const unsigned int base, const int iexp)
@@ -85,6 +155,8 @@ pow(const unsigned int base, const int iexp)
   return iexp <= 0 ? 1 : (((iexp % 2 == 1) ? base : 1) * ::Util::pow(base * base, iexp / 2));
 }
 
+
+
 std::string
 si_metric_prefix(unsigned long long measurement)
 {
@@ -101,6 +173,8 @@ si_metric_prefix(unsigned long long measurement)
   return oss.str();
 }
 
+
+
 std::string
 damping_to_fstring(double factor)
 {
@@ -108,6 +182,63 @@ damping_to_fstring(double factor)
   oss << factor;
   return oss.str();
 }
+
+
+
+std::string
+short_name(const std::string & str_in)
+{
+  std::string sname = str_in.substr(0, 4);
+  std::transform(sname.begin(), sname.end(), sname.begin(), [](auto c) { return std::tolower(c); });
+  return sname;
+}
+
+
+
+template<typename MatrixType,
+         typename VectorType = LinearAlgebra::distributed::Vector<typename MatrixType::value_type>>
+struct MatrixWrapper
+{
+  using value_type  = typename MatrixType::value_type;
+  using vector_type = VectorType;
+
+  MatrixWrapper(const MatrixType & matrix_in) : matrix(matrix_in)
+  {
+  }
+
+  types::global_dof_index
+  m() const
+  {
+    return matrix.m();
+  }
+
+  types::global_dof_index
+  n() const
+  {
+    return matrix.n();
+  }
+
+  void
+  vmult(const ArrayView<value_type> dst_view, const ArrayView<const value_type> src_view) const
+  {
+    AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1U,
+                ExcMessage("No MPI support"));
+    vector_type dst(dst_view.size());
+    vector_type src(src_view.size());
+
+    std::copy(src_view.cbegin(), src_view.cend(), src.begin());
+    matrix.vmult(dst, src);
+    std::copy(dst.begin(), dst.end(), dst_view.begin());
+  }
+
+  FullMatrix<value_type>
+  as_fullmatrix()
+  {
+    return table_to_fullmatrix(Tensors::matrix_to_table(*this));
+  }
+
+  const MatrixType & matrix;
+};
 
 } // end namespace Util
 
