@@ -614,7 +614,8 @@ void
 ModelProblem<dim, fe_degree>::setup_system()
 {
   dof_handler.clear();
-  dof_handler.initialize(triangulation, *finite_element);
+  dof_handler.reinit(triangulation);
+  dof_handler.distribute_dofs(*finite_element);
   dof_handler.distribute_mg_dofs();
 
   print_parameter("Number of degrees of freedom:", dof_handler.n_dofs());
@@ -796,7 +797,7 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
       typename C0IP::MW::MatrixIntegrator<dim, /*multigrid?*/ false, /*stream function?*/ false>;
 
     system_u.update_ghost_values();
-    system_rhs.zero_out_ghosts();
+    system_rhs.zero_out_ghost_values();
 
     MatrixIntegrator matrix_integrator(load_function.get(),
                                        analytical_solution.get(),
@@ -2319,7 +2320,7 @@ ModelProblem<dim, fe_degree>::compute_energy_error() const
 
       double jump_grad_uh_dot_n = 0.;
       for(unsigned int i = 0; i < n_interface_dofs; ++i)
-        jump_grad_uh_dot_n += dof_values[i] * fe_interface_values.jump_gradient(i, q) * n;
+        jump_grad_uh_dot_n += dof_values[i] * fe_interface_values.jump_in_shape_gradients(i, q) * n;
 
       /// assuming u is smooth the jump of its gradient is zero
       local_error += jump_grad_uh_dot_n * jump_grad_uh_dot_n * fe_interface_values.JxW(q);
@@ -2366,7 +2367,7 @@ ModelProblem<dim, fe_degree>::compute_energy_error() const
 
       double grad_uh_dot_n = 0.;
       for(unsigned int i = 0; i < n_interface_dofs; ++i)
-        grad_uh_dot_n += dof_values[i] * fe_interface_values.jump_gradient(i, q) * n;
+        grad_uh_dot_n += dof_values[i] * fe_interface_values.jump_in_shape_gradients(i, q) * n;
 
       local_error += (grad_uh_dot_n - grad_u_dot_n) * (grad_uh_dot_n - grad_u_dot_n) *
                      fe_interface_values.JxW(q);

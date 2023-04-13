@@ -220,7 +220,7 @@ struct FaceOperation
     const auto penalty =
       this->penalty_factor * average_factor * ::Nitsche::compute_penalty_impl(fe_degree, h, h);
 
-    auto value_on_face = make_vectorized_array<Number>(0.);
+    VectorizedArray<double> value_on_face = 0.;
     for(int i = 0; i < n_dofs_test; ++i)
     {
       const auto & v_i      = eval_test.shape_value_face(i, face_no, direction, cell_no);
@@ -259,8 +259,8 @@ struct FaceOperation
     const auto penalty =
       this->interior_penalty_factor * 0.5 * ::Nitsche::compute_penalty_impl(fe_degree, h0, h1);
 
-    auto value_on_interface01 = make_vectorized_array<Number>(0.);
-    auto value_on_interface10 = make_vectorized_array<Number>(0.);
+    VectorizedArray<double> value_on_interface01 = 0.;
+    VectorizedArray<double> value_on_interface10 = 0.;
     for(int i = 0; i < n_dofs_test; ++i) // u is ansatz & v is test shape function
     {
       const auto & v0_i      = eval_test.shape_value_face(i, 1, direction, 0);

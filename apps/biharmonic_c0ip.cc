@@ -141,8 +141,8 @@ main(int argc, char * argv[])
     unsigned int use_hierarchical_elements = false;
     unsigned int use_doubling_of_steps     = false;
     unsigned int n_smoothing_steps         = 2;
-    unsigned int local_solver_index        = 0; // exact
-    unsigned int ksvd_rank                 = 1;
+    unsigned int local_solver_index        = 2; // exact
+    unsigned int ksvd_rank                 = 2;
 
     //: parse arguments
     atoi_if(solver_index, 1);
@@ -265,7 +265,10 @@ main(int argc, char * argv[])
 
     std::fstream fout;
     const auto   filename = get_filename(prms, equation_data);
-    fout.open(filename + ".log", std::ios_base::out);
+
+    if(is_first_proc)
+      fout.open(filename + ".log", std::ios_base::out);
+
     auto pcout               = std::make_shared<ConditionalOStream>(fout, is_first_proc);
     biharmonic_problem.pcout = pcout;
 
@@ -285,11 +288,15 @@ main(int argc, char * argv[])
       pp_output_as_string = write_ppdata_to_string(biharmonic_problem.pp_data);
 
     *pcout << std::endl << std::endl << pp_output_as_string;
-    fout.close();
+    if(is_first_proc)
+      fout.close();
 
-    fout.open(filename + ".tab", std::ios_base::out);
-    fout << pp_output_as_string;
-    fout.close();
+    if(is_first_proc)
+    {
+      fout.open(filename + ".tab", std::ios_base::out);
+      fout << pp_output_as_string;
+      fout.close();
+    }
   }
 
   catch(std::exception & exc)

@@ -213,13 +213,13 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::face_worker(const IteratorType &
 
     for(unsigned int i = 0; i < n_interface_dofs; ++i)
     {
-      const double av_hessian_i_dot_n_dot_n = (fe_interface_values.average_hessian(i, q) * n * n);
-      const double jump_grad_i_dot_n        = (fe_interface_values.jump_gradient(i, q) * n);
+      const double av_hessian_i_dot_n_dot_n = (fe_interface_values.average_of_shape_hessians(i, q) * n * n);
+      const double jump_grad_i_dot_n        = (fe_interface_values.jump_in_shape_gradients(i, q) * n);
 
       for(unsigned int j = 0; j < n_interface_dofs; ++j)
       {
-        const double av_hessian_j_dot_n_dot_n = (fe_interface_values.average_hessian(j, q) * n * n);
-        const double jump_grad_j_dot_n        = (fe_interface_values.jump_gradient(j, q) * n);
+        const double av_hessian_j_dot_n_dot_n = (fe_interface_values.average_of_shape_hessians(j, q) * n * n);
+        const double jump_grad_j_dot_n        = (fe_interface_values.jump_in_shape_gradients(j, q) * n);
 
         copy_data_face.matrix(i, j) += (-av_hessian_i_dot_n_dot_n  // - {grad^2 v n n
                                                                    //
@@ -297,13 +297,13 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::boundary_worker(const IteratorTy
 
     for(unsigned int i = 0; i < n_interface_dofs; ++i)
     {
-      const double av_hessian_i_dot_n_dot_n = (fe_interface_values.average_hessian(i, q) * n * n);
-      const double jump_grad_i_dot_n        = (fe_interface_values.jump_gradient(i, q) * n);
+      const double av_hessian_i_dot_n_dot_n = (fe_interface_values.average_of_shape_hessians(i, q) * n * n);
+      const double jump_grad_i_dot_n        = (fe_interface_values.jump_in_shape_gradients(i, q) * n);
 
       for(unsigned int j = 0; j < n_interface_dofs; ++j)
       {
-        const double av_hessian_j_dot_n_dot_n = (fe_interface_values.average_hessian(j, q) * n * n);
-        const double jump_grad_j_dot_n        = (fe_interface_values.jump_gradient(j, q) * n);
+        const double av_hessian_j_dot_n_dot_n = (fe_interface_values.average_of_shape_hessians(j, q) * n * n);
+        const double jump_grad_j_dot_n        = (fe_interface_values.jump_in_shape_gradients(j, q) * n);
 
         copy_data_face.matrix(i, j) += (-av_hessian_i_dot_n_dot_n  // - {grad^2 v n n}
                                           * jump_grad_j_dot_n      //   [grad u n]
@@ -551,7 +551,7 @@ public:
                                    Table<2, VectorizedArray<Number>> & cell_matrix,
                                    const int                           direction,
                                    const int                           cell_no) {
-      auto integral = make_vectorized_array<Number>(0.);
+      VectorizedArray<double> integral = 0.;
       for(int j = 0; j < fe_order; ++j)
         for(int i = 0; i < fe_order; ++i)
         {
@@ -585,7 +585,7 @@ public:
       const auto average_factor = eval_v.get_average_factor(direction, cell_no, face_no);
       const auto penalty = average_factor * compute_penalty(eval_v, direction, cell_no, cell_no);
 
-      auto value_on_face = make_vectorized_array<Number>(0.);
+      VectorizedArray<double> value_on_face = 0.;
       for(int i = 0; i < fe_degree + 1; ++i)
       {
         const auto & grad_vi = eval_v.shape_gradient_face(i, face_no, direction, cell_no);
@@ -620,8 +620,8 @@ public:
       const auto sqnormal1 = normal1 * normal1;
       const auto penalty   = 0.5 * compute_penalty(eval_v, direction, cell_no0, cell_no1);
 
-      auto value_on_interface01{make_vectorized_array<Number>(0.)};
-      auto value_on_interface10{make_vectorized_array<Number>(0.)};
+      VectorizedArray<double> value_on_interface01 = 0.;
+      VectorizedArray<double> value_on_interface10 = 0.;
       for(int i = 0; i < fe_degree + 1; ++i)
       {
         const auto & hess_v0i = eval_v.shape_hessian_face(i, face_no0, direction, cell_no0);

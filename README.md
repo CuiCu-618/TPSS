@@ -10,7 +10,7 @@ The code is based on the generic finite element library [deal.II](https://github
 ---
 **Warning**
 
-To run the current TPSS software this branch (https://github.com/jwitte08/dealii/tree/rt_matrixfree) of jwitte08's deal.II fork is required.
+To run the current TPSS software this branch (https://github.com/CuiCu-618/dealii/tree/raviart-thomas) of Cu's deal.II fork is required.
 
 ---
 
