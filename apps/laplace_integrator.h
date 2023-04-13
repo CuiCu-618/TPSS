@@ -294,7 +294,7 @@ CellLaplace<EvaluatorType>::operator()(const EvaluatorType &,
                                        const int                           direction,
                                        const int                           cell_no) const
 {
-  auto integral{make_vectorized_array<Number>(0.)};
+  VectorizedArray<double> integral = 0.;
   for(int dof_u = 0; dof_u < fe_order; ++dof_u) // u is ansatz function & v is test function
     for(int dof_v = 0; dof_v < fe_order; ++dof_v)
     {
@@ -324,7 +324,7 @@ FaceLaplace<EvaluatorType>::operator()(const EvaluatorType &,
   const auto penalty        = equation_data.ip_factor * average_factor *
                        compute_penalty(eval_test, direction, cell_no, cell_no);
 
-  auto value_on_face{make_vectorized_array<Number>(0.)};
+  VectorizedArray<double> value_on_face = 0.;
   for(int dof_v = 0; dof_v < fe_order; ++dof_v) // u is ansatz function & v is test function
   {
     const auto & v      = eval_test.shape_value_face(dof_v, face_no, direction, cell_no);
@@ -363,8 +363,8 @@ FaceLaplace<EvaluatorType>::operator()(const EvaluatorType &,
   const auto penalty        = equation_data.ip_factor * average_factor *
                        Laplace::DG::FD::compute_penalty(eval_test, direction, cell_no0, cell_no1);
 
-  auto value_on_interface01{make_vectorized_array<Number>(0.)};
-  auto value_on_interface10{make_vectorized_array<Number>(0.)};
+  VectorizedArray<double> value_on_interface01 = 0.;
+  VectorizedArray<double> value_on_interface10 = 0.;
   for(int dof_v = 0; dof_v < fe_order; ++dof_v) // u is ansatz & v is test shape function
   {
     const auto & v0      = eval_test.shape_value_face(dof_v, face_no0, direction, cell_no0);
@@ -705,8 +705,8 @@ Operator<dim, fe_degree, Number>::apply_boundary(
       const VectorizedArray<Number> u_inner                 = phi_inner.get_value(q);
       const VectorizedArray<Number> normal_derivative_inner = phi_inner.get_normal_derivative(q);
 
-      auto u_outer                 = make_vectorized_array(0.);
-      auto normal_derivative_outer = make_vectorized_array(0.);
+      VectorizedArray<double> u_outer = 0.;
+      VectorizedArray<double> normal_derivative_outer = 0.;
       if(is_dirichlet && is_neumann)
       {
         u_outer                 = 0.;

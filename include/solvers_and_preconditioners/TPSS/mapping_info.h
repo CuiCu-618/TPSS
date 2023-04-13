@@ -83,7 +83,7 @@ private:
   const MatrixFree<dim, number> * mf_storage;
   const internal::MatrixFreeFunctions::MappingInfo<dim, number, VectorizedArrayType> *
     mf_mapping_info = nullptr;
-  const internal::MatrixFreeFunctions::MappingInfoStorage<dim, dim, number, VectorizedArrayType> *
+  const internal::MatrixFreeFunctions::MappingInfoStorage<dim, dim, VectorizedArrayType> *
     mf_mapping_data = nullptr;
 
   unsigned int n_subdomains          = static_cast<unsigned int>(-1);

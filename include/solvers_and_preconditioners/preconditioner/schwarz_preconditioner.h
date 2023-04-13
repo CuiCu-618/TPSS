@@ -65,14 +65,14 @@ template<typename Number>
 void
 zero_out_ghosts_if_needed(LinearAlgebra::distributed::Vector<Number> & vec)
 {
-  vec.zero_out_ghosts();
+  vec.zero_out_ghost_values();
 }
 
 template<typename Number>
 void
 zero_out_ghosts_if_needed(LinearAlgebra::distributed::BlockVector<Number> & vec)
 {
-  vec.zero_out_ghosts();
+  vec.zero_out_ghost_values();
 }
 
 } // namespace internal

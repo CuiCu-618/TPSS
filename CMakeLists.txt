@@ -88,7 +88,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     "MinSizeRel" "RelWithDebInfo")
 endif()
 
-find_package(deal.II 9.1 QUIET
+find_package(deal.II 9.4 QUIET
   HINTS ${deal.II_DIR} ${DEAL_II_DIR} $ENV{DEAL_II_DIR}
   )
 if(NOT ${deal.II_FOUND})
@@ -121,7 +121,7 @@ target_include_directories(tpss INTERFACE
 
 ADD_SUBDIRECTORY(apps)
 
-ADD_SUBDIRECTORY(lib/googletest EXCLUDE_FROM_ALL)
+#ADD_SUBDIRECTORY(lib/googletest EXCLUDE_FROM_ALL)
 
-ADD_SUBDIRECTORY(tests EXCLUDE_FROM_ALL)
+#ADD_SUBDIRECTORY(tests EXCLUDE_FROM_ALL)
 

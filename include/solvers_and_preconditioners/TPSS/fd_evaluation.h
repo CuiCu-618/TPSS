@@ -654,7 +654,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_average_factor(const i
                                                                          const int cell_no,
                                                                          const int face_no) const
 {
-  auto         factor      = make_vectorized_array<Number>(0.5);
+  VectorizedArray<double> factor = 0.5;
   const auto & at_boundary = get_boundary_mask(direction, cell_no, face_no);
   for(auto lane = 0U; lane < macro_size; ++lane)
     if(at_boundary[lane])

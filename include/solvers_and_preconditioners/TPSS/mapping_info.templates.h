@@ -69,7 +69,7 @@ MappingInfo<dim, number>::compute_average_scaling(FEValues<dim> &               
     // // DEBUG
     // std::cout << "Compute average arc length on cells ";
     AlignedVector<Tensor<1, dim, VectorizedArray<double>>> qpoints{n_qpoints};
-    auto volume{make_vectorized_array<double>(0.)};
+    VectorizedArray<double> volume = 0.;
     for(unsigned int vv = 0; vv < macro_size; ++vv)
     {
       const auto & cell = macro_cell[vv];
@@ -278,7 +278,7 @@ MappingInfo<dim, number>::initialize_storage(const PatchInfo<dim> &             
   // *** link to internal MatrixFree mapping storage
   this->mf_mapping_info        = &mf_storage.get_mapping_info();
   const Mapping<dim> & mapping = *(mf_mapping_info->mapping);
-  this->mf_mapping_data        = internal::MatrixFreeFunctions::
+  this->mf_mapping_data        = &internal::MatrixFreeFunctions::
     MappingInfoCellsOrFaces<dim, number, false /*is_face*/, VectorizedArrayType>::get(
       *mf_mapping_info, 0 /*quad_no*/);
 

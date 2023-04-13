@@ -276,7 +276,7 @@ PatchInfo<dim>::gather_vertex_patches(const DoFHandler<dim> & dof_handler,
 
       std::set<unsigned> to_be_owned;
       std::set<unsigned> to_be_erased;
-      for(const auto key_value : global_to_ghost_id)
+      for(const auto &key_value : global_to_ghost_id)
       {
         const unsigned int global_index     = key_value.first;
         const auto &       proc_to_cell_ids = key_value.second.proc_to_cell_ids;
@@ -329,7 +329,7 @@ PatchInfo<dim>::gather_vertex_patches(const DoFHandler<dim> & dof_handler,
     {
       //: (2) determine mpi-proc with the minimal CellId for all GhostPatches
       std::set<unsigned> to_be_owned;
-      for(const auto key_value : global_to_ghost_id)
+      for(const auto &key_value : global_to_ghost_id)
       {
         const unsigned int global_index     = key_value.first;
         const auto &       proc_to_cell_ids = key_value.second.proc_to_cell_ids;
@@ -362,7 +362,7 @@ PatchInfo<dim>::gather_vertex_patches(const DoFHandler<dim> & dof_handler,
         my_patch.first  = my_patch.second;
         global_to_ghost_id.erase(global_index);
       }
-      for(const auto key_value : global_to_ghost_id)
+      for(const auto &key_value : global_to_ghost_id)
       {
         const unsigned int global_index = key_value.first;
         global_to_local_map.erase(global_index);

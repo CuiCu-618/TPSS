@@ -408,7 +408,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
   {
     timer.restart();
     initialize_ghosted_vector_if_needed(*solution_ghosted);
-    solution_ghosted->zero_out_ghosts();
+    solution_ghosted->zero_out_ghost_values();
     TPSS::internal::copy_locally_owned_data(*solution_ghosted, solution_in);
     solution = solution_ghosted.get();
 

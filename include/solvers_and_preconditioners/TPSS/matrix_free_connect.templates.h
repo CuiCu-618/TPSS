@@ -9,8 +9,10 @@ MatrixFreeConnect<dim, Number>::initialize(
 {
   Assert(dof_infos_in.size() != 0, ExcMessage("No dof_info is passed."));
   const auto patch_info_0 = dof_infos_in[0].patch_info;
-  for(const auto dof_info : dof_infos_in)
+  for(const auto &dof_info : dof_infos_in){
     Assert(patch_info_0 == dof_info.patch_info, ExcMessage("PatchInfos do not coincide."));
+    (void)dof_info;
+  }
   Assert(mf_storage_in, ExcMessage("mf_storage_in not initialized."));
   const auto n_unique_dofh_indices = [&]() {
     std::set<unsigned int> unique_dofh_indices;
@@ -54,7 +56,7 @@ MatrixFreeConnect<dim, Number>::initialize(
   cindex_to_bindex_bcomp_pair.resize(n_cells_stored); // we don't care about the accurate size
   for(unsigned int bid = 0; bid < n_cell_batches; ++bid)
     for(unsigned int comp = 0; comp < macro_size; ++comp)
-      if(comp < mf_storage->n_components_filled(bid))
+      if(comp < mf_storage->n_active_entries_per_cell_batch(bid))
       {
         const auto         cell   = mf_storage->get_cell_iterator(bid, comp, /*dofh_index*/ 0);
         const unsigned int cindex = cell->index();

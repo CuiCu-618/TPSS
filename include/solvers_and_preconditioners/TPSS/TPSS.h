@@ -45,7 +45,7 @@ str_dof_layout(DoFLayout dof_layout)
 
 template<int dim>
 DoFLayout
-get_dof_layout(const FiniteElement<dim> & finite_element)
+get_dof_layout(const FiniteElement<dim, dim> & finite_element)
 {
   auto dof_layout = DoFLayout::invalid;
   if(finite_element.get_name().find("FE_DGQ") != std::string::npos)
@@ -63,7 +63,7 @@ get_dof_layout(const FiniteElement<dim> & finite_element)
 
 template<int dim>
 std::string
-str_dof_layout(const FiniteElement<dim> & finite_element)
+str_dof_layout(const FiniteElement<dim, dim> & finite_element)
 {
   return str_dof_layout(get_dof_layout(finite_element));
 }
