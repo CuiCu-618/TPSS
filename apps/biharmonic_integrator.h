@@ -399,6 +399,25 @@ public:
         const auto bilaplace_matrices = assemble_bilaplace_tensor(eval);
         const auto laplace_matrices   = assemble_laplace_tensor(eval);
 
+        // auto print_matrices = [](auto matrix)
+        // {
+        //   for (auto i=0U; i<matrix.size(); ++i)
+        //   {
+        //     for (auto m=0U; m<matrix[i].size(1);++m)
+        //     {
+        //       for (auto n=0U; n<matrix[i].size(0);++n)
+        //         std::cout << matrix[i](m,n) << " ";
+        //       std::cout << std::endl;
+        //     }
+        //     std::cout << std::endl;
+        //   }
+        //   std::cout << std::endl;
+        // };
+        // std::cout << patch << std::endl;
+        // print_matrices(mass_matrices);
+        // print_matrices(laplace_matrices);
+        // print_matrices(bilaplace_matrices); 
+
         /// store rank1 tensors of separable Kronecker representation
         /// BxMxM + MxBxM + MxMxB
         const auto & BxMxM = [&](const int direction) {
@@ -512,6 +531,14 @@ public:
               // std::cout << "alpha: " << varray_to_string(alpha) << std::endl;
               Tensors::scaling<dim>(alpha, approximation.at(1U));
               local_matrices[patch].reinit(approximation, additional_data);
+
+              // {
+              //   auto eigenvalue_tensor  = local_matrices[patch].get_eigenvalue_tensor();
+              //   for (unsigned int i=0; i<dim; ++i)
+              //   for (unsigned int j=0; j<eigenvalue_tensor[i].size(); ++j)
+              //     std::cout << eigenvalue_tensor[i][j] << " ";
+              //   std::cout << std::endl;
+              // }
             }
           }
 
